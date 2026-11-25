@@ -141,7 +141,13 @@ describe("the primer registry and prompt", () => {
 	};
 	it("carries the materi tools, ask, and prime_done, and no graded question tool", () => {
 		const names = Object.keys(createPrimerTools({ chatId: "p", chatStore, deliver: () => {}, materi: () => port })).sort();
-		assert.deepEqual(names, ["ask_user_question", "materi_exact", "materi_page", "materi_search", "prime_done"]);
+		assert.deepEqual(names, ["ask_user_question", "materi_blocks", "materi_exact", "materi_page", "materi_search", "prime_done"]);
+	});
+	it("the primer's materi_page boxes one block per call", async () => {
+		const tools = createPrimerTools({ chatId: "p", chatStore, deliver: () => {}, materi: () => port });
+		const res = await tools.materi_page?.execute("t", { doc: "d.md", page: 1, highlight: [1, 3] });
+		const text = res?.content.map((c: { type: string; text?: string }) => c.text ?? "").join("");
+		assert.match(String(text), /^materi_page refused: box one block per call/);
 	});
 	it("composes the priming doctrine without the quiz mechanics", () => {
 		const prompt = composeInstructions("primer");

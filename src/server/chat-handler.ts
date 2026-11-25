@@ -45,6 +45,7 @@ import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
 import {
 	extractionEnabled,
 	graphToolsEnabled,
+	primingEnabled,
 	resolveConversationSpec,
 	resolveRoleSpec,
 } from "../core/settings-resolution.ts";
@@ -644,9 +645,10 @@ export async function handleChatInput(
 	// steers, usage, extraction) — only the agent differs.
 	const teaching = hasProbeDone(agentMessages);
 	// PRIMING (the phase before the probe): offered only for teach sessions
-	// when a materi index is installed; the record decides whether it is
-	// still open (core/native-messages.ts primingOpen).
-	const primingPort = !teaching && record.kind !== "practice" ? (() => {
+	// when a materi index is installed and the Priming switch is on; the
+	// record decides whether it is still open (core/native-messages.ts
+	// primingOpen). Switching it off mid-priming hands the session to the probe.
+	const primingPort = !teaching && record.kind !== "practice" && primingEnabled(effective) ? (() => {
 		try {
 			return materiSearchPort();
 		} catch {

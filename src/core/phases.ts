@@ -31,8 +31,8 @@ function shown(state: FoldState): Phase3 {
 }
 
 /** Materi tool calls: before any probe activity they mark a primed session. */
-const PRIMING_PART_TYPES = new Set(["tool-materi_search", "tool-materi_exact", "tool-materi_page", "tool-prime_done"]);
-const PRIMING_TOOL_NAMES = new Set(["materi_search", "materi_exact", "materi_page", "prime_done"]);
+const PRIMING_PART_TYPES = new Set(["tool-materi_search", "tool-materi_exact", "tool-materi_page", "tool-materi_blocks", "tool-prime_done"]);
+const PRIMING_TOOL_NAMES = new Set(["materi_search", "materi_exact", "materi_page", "materi_blocks", "prime_done"]);
 /** Probe-phase question calls (the prober's registry names) and its seam. */
 const PROBE_PART_TYPES = new Set(["tool-probe", "tool-recall", "tool-probe_done"]);
 const PROBE_TOOL_NAMES = new Set(["probe", "recall", "probe_done"]);

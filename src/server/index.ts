@@ -64,4 +64,6 @@ export { claudeCodeInstallationResponse } from "./claude-code.ts";
 // The custom endpoint module (registers into piModels() + probes for models).
 // No import side effects; the boot sync lives in stores.ts.
 export * from "./custom-provider.ts";
+// Course materials (materi index): status for Settings and the new-session screen.
+export { materiStatus, type MateriStatus, type MateriCourseStatus } from "./materi-status.ts";
 export { customProviderGet, customProviderMutation } from "./custom-provider-http.ts";

@@ -18,6 +18,7 @@ import { ComposerActions, NodePickerControl } from "@/components/composer-action
 import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
 import { SessionStarter } from "@/components/start-session";
 import type { ChatSettings, GraphSnapshot } from "@/src/core";
+import { TEACH_OPENING, usePrimingAvailable } from "@/components/use-priming-available";
 
 /** The draft's pick set (owner round 10): the SAME shape the home pick
  *  bar lifts — resolved nodes as the learner SAW them at pick time. */
@@ -112,6 +113,7 @@ export function DraftShell({
 	overlay?: ReactNode;
 }) {
 	const controller = useOptionalInteractionLayers();
+	const primingAvailable = usePrimingAvailable();
 	const pathname = usePathname();
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const surfaceTarget = usePageSurfaceBoundary({ active: pathname === "/chat/new", viewKey: "/chat/new", bodyRef });
@@ -182,7 +184,7 @@ export function DraftShell({
 									description={
 										mode === "practice"
 											? "Pick nodes from your knowledge graph, describe what you want to practice, or bring your own problem."
-											: "The teacher will open by probing what you already know."
+											: primingAvailable ? TEACH_OPENING.priming : TEACH_OPENING.probe
 									}
 								/>
 							</ConversationContent>

@@ -33,6 +33,16 @@ function headlineArg(tool: string, input: unknown): string {
 		return p;
 	}
 	if (typeof inp.pattern === "string") return inp.pattern;
+	// Course-material search: the query (and course, when given) is the call's subject.
+	if ((tool === "materi_search" || tool === "materi_exact") && typeof inp.query === "string") {
+		return typeof inp.course === "string" && inp.course ? `${inp.query} · ${inp.course}` : inp.query;
+	}
+	// A page read for the tutor only, or a page call that showed nothing: document and page.
+	if ((tool === "materi_blocks" || tool === "materi_page") && typeof inp.doc === "string") {
+		const parts = inp.doc.split("/").filter(Boolean);
+		const name = (parts.at(-1) === "markdown.md" ? parts.at(-2) : parts.at(-1)) ?? inp.doc;
+		return `${name.replace(/\.pdf$/i, "")}${typeof inp.page === "number" ? ` · p. ${inp.page}` : ""}`;
+	}
 	// list_propositions: the session id is the call's subject — the
 	// collapsed line reads "list_propositions chat_…". Shown as given
 	// (the id is exactly what list_sessions reported to the model).

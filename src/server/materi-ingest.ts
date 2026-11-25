@@ -9,6 +9,8 @@
  * PDF's text layer → weak pages rendered to PNG and sent to DeepSeek OCR
  * (raw output kept for Priming's boxes) → chunks (the old index's rule) →
  * Voyage document embeddings → appended to the course shard and FTS.
+ * The original then moves to <data>/materi-files/<matkul>/ (materi-files.ts);
+ * a byte-identical copy of a kept file is removed from the inbox.
  *
  * One file at a time, never in parallel with itself. Every outcome is one
  * line in <index>/ingest-log.jsonl with its page and token counts.
@@ -39,6 +41,7 @@ import type { PdfPage } from "../agent/subagents/pdf-markdown.ts";
 import { getHeadless } from "../agent/subagents/headless.ts";
 import { keyValue } from "./keys.ts";
 import { appendToMateriIndex, courseWordSets, embedDocuments, materiIndexDir } from "./materi-index.ts";
+import { sourcePdfPath, storeSourcePdf } from "./materi-files.ts";
 
 const DEEPSEEK_OCR_URL = "https://api.deepseek.com/v1/tools/ocr";
 /** Documented account limit is 15 recognitions in progress; stay well under it. */
@@ -158,13 +161,32 @@ export async function ingestFile(relative: string, deps: IngestDeps = defaultDep
 	const base: IngestOutcome = { at, file: relative, matkul, status: "failed" };
 	if (!matkul) return { ...base, status: "skipped", note: "Put the PDF in a course folder: materi-inbox/<matkul>/file.pdf." };
 	const abs = path.join(/* turbopackIgnore: true */ materiInboxDir(), ...relative.split("/"));
+	const subpath = relative.split("/").slice(1).join("/");
 	try {
 		const data = new Uint8Array(fs.readFileSync(abs));
 		const hash = sha256(data);
+		// The original leaves the inbox for materi-files once it is registered.
+		// A failed move keeps it where it is: the entry then points at the inbox.
+		const keep = (): string => {
+			try {
+				return storeSourcePdf(abs, matkul, subpath, hash);
+			} catch {
+				return abs;
+			}
+		};
 		const sources = readSources();
 		const known = sources.docs.find((d) => d.sha256 === hash);
 		if (known) {
 			const same = known.duplicateOf ?? known.doc;
+			const stored = sourcePdfPath(known);
+			if (stored && fs.existsSync(stored) && path.resolve(stored) !== path.resolve(abs)) {
+				// Same bytes are already kept: this copy only takes space.
+				fs.unlinkSync(abs);
+			} else {
+				// The registered copy is missing (or is this very file): keep this one for every entry of the hash.
+				const pdf = keep();
+				writeSources({ ...sources, docs: readSources().docs.map((d) => (d.sha256 === hash ? { ...d, pdf } : d)) });
+			}
 			return { ...base, sha256: hash, status: "duplicate", doc: same, note: `Same content as ${same}.` };
 		}
 
@@ -187,7 +209,7 @@ export async function ingestFile(relative: string, deps: IngestDeps = defaultDep
 		const course = (deps.courseWords ?? courseWordSets)(matkul);
 		const early = matchPages([...text].map(([page, t]) => ({ page, text: t })), course);
 		const recordCopy = (of: string, note: string): IngestOutcome => {
-			const entry: MateriSourceEntry = { doc: `materi-inbox/${relative}`, matkul, sha256: hash, pdf: abs, origin: "ingested", pages: pages.length, duplicateOf: of, addedAt: at };
+			const entry: MateriSourceEntry = { doc: `materi-inbox/${relative}`, matkul, sha256: hash, pdf: keep(), origin: "ingested", pages: pages.length, duplicateOf: of, addedAt: at };
 			writeSources({ ...sources, docs: [...readSources().docs, entry] });
 			return { ...base, sha256: hash, status: "duplicate", doc: of, pages: pages.length, note };
 		};
@@ -253,7 +275,7 @@ export async function ingestFile(relative: string, deps: IngestDeps = defaultDep
 			doc,
 			matkul,
 			sha256: hash,
-			pdf: abs,
+			pdf: keep(),
 			origin: "ingested",
 			pages: pages.length,
 			ocrPages: ocrDone.sort((a, b) => a - b),

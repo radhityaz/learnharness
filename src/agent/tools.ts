@@ -26,7 +26,7 @@ import { findTool } from "./tools/find.ts";
 import { grepTool } from "./tools/grep.ts";
 import { createShowImageTool } from "./tools/show-image.ts";
 import { healToolRecord } from "./tools/heal.ts";
-import { createMateriTools, type MateriDisplay } from "./tools/materi.ts";
+import { createMateriTools, type MateriDisplay, type MateriToolOptions } from "./tools/materi.ts";
 import type { MateriSearchPort } from "../core/materi.ts";
 import type { GraphStore } from "../core/ports.ts";
 
@@ -296,7 +296,7 @@ export interface PrimerToolContext extends PrimeDoneContext {
  */
 export function createPrimerTools(ctx: PrimerToolContext): Record<string, AgentTool<any>> {
 	return healToolRecord({
-		...materiToolsFor(ctx.materi, { chatId: ctx.chatId, chatStore: ctx.chatStore }),
+		...materiToolsFor(ctx.materi, { chatId: ctx.chatId, chatStore: ctx.chatStore }, { oneBlock: true }),
 		ask_user_question: askUserQuestionTool,
 		...primeDoneTool(ctx),
 	});
@@ -463,10 +463,11 @@ function withoutMechanics(enabled?: EnabledTools): EnabledTools | undefined {
 function materiToolsFor(
 	materi: (() => MateriSearchPort | null) | undefined,
 	display?: MateriDisplay,
+	options?: MateriToolOptions,
 ): Record<string, AgentTool<any>> {
 	try {
 		const port = materi?.();
-		return port ? createMateriTools(port, display) : {};
+		return port ? createMateriTools(port, display, options) : {};
 	} catch {
 		return {};
 	}

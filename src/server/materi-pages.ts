@@ -15,6 +15,7 @@ import { parseOcrBlocks, type MateriSourceEntry, type OcrBlock } from "../core/m
 import type { MateriPageView } from "../core/materi.ts";
 import { getHeadless } from "../agent/subagents/headless.ts";
 import { deepseekOcr, materiPagesDir, readSources } from "./materi-ingest.ts";
+import { sourcePdfPath } from "./materi-files.ts";
 
 const PAGE_DPI = 150;
 const HIGHLIGHT = "#e5484d";
@@ -37,8 +38,9 @@ function findSource(doc: string): MateriSourceEntry {
 	const entry = readSources().docs.find((d) => d.doc === doc);
 	if (!entry) throw new Error(`Unknown document "${doc}". Use the doc path exactly as materi_search printed it.`);
 	if (!entry.pdf || !entry.sha256) throw new Error(`The original PDF of "${doc}" is not available, so its pages cannot be shown.`);
-	if (!fs.existsSync(entry.pdf)) throw new Error(`The original PDF of "${doc}" is missing at ${entry.pdf}.`);
-	return entry;
+	const pdf = sourcePdfPath(entry) as string;
+	if (!fs.existsSync(pdf)) throw new Error(`The original PDF of "${doc}" is missing at ${pdf}.`);
+	return { ...entry, pdf };
 }
 
 function readOcrCache(dir: string): Record<string, string> {

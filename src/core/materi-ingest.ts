@@ -26,7 +26,7 @@ export interface MateriSourceEntry {
 	matkul: string;
 	/** SHA-256 of the source file, lowercase hex; null for old documents without one. */
 	sha256: string | null;
-	/** Absolute path of the source PDF when known. */
+	/** The source PDF when known: "materi-files/…" relative to the data folder, or an absolute path (older entries). */
 	pdf: string | null;
 	/** "legacy": migrated from the Belajar index; "ingested": added by the pipeline. */
 	origin: "legacy" | "ingested";

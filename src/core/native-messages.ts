@@ -960,7 +960,7 @@ export function hasPrimeDone(messages: readonly LhMessage[]): boolean {
 /** Tools whose call means the probe has begun (prober question tools and its seam). */
 const PROBE_ACTIVITY_TOOLS = new Set(["probe", "recall", "probe_done"]);
 /** Tools only the primer carries before the probe; their call marks a primed session. */
-export const PRIMING_TOOLS = new Set(["materi_search", "materi_exact", "materi_page"]);
+export const PRIMING_TOOLS = new Set(["materi_search", "materi_exact", "materi_page", "materi_blocks"]);
 
 /**
  * Is the session still in its priming phase? Only when priming is offered

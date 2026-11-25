@@ -161,6 +161,54 @@ test("materi_page saves the image for the learner and gives the teacher only the
 	assert.equal(formatBlocks({ png: new Uint8Array(), width: 1, height: 1, blocks: null, highlighted: [] }), "No blocks for this page.");
 });
 
+test("materi_blocks reads the block list without showing anything; oneBlock refuses multi-block boxes", async () => {
+	const saved: string[] = [];
+	const calls: number[][] = [];
+	const port: MateriSearchPort = {
+		courses: () => [{ matkul: "m", rows: 1 }],
+		semantic: async () => [],
+		exact: async () => ({ hits: [], match: "all" }),
+		page: async (_doc, _page, highlight) => {
+			calls.push(highlight ?? []);
+			return {
+				png: whitePng(),
+				width: 400,
+				height: 300,
+				blocks: [
+					{ label: "sub_title", box: [1, 2, 3, 4], text: "# Backward pass" },
+					{ label: "text", box: [1, 2, 3, 4], text: "LS = LF - t" },
+				],
+				highlighted: highlight ?? [],
+			};
+		},
+	};
+	const display = { chatId: "c", chatStore: { saveImageSnapshot: (_chat: string, id: string) => void saved.push(id) } };
+	const textOf = (r: { content: { type: string; text?: string }[] }) => r.content.map((c) => c.text ?? "").join("");
+
+	const primer = createMateriTools(port, display, { oneBlock: true });
+	const look = await primer.materi_blocks?.execute("t", { doc: "d.md", page: 4 });
+	assert.ok(look);
+	assert.equal(textOf(look), "Not shown to the learner (read only): d.md p. 4.\nBlocks:\n1 [sub_title] # Backward pass\n2 [text] LS = LF - t");
+	assert.equal((look.details as { snapshotId?: string } | null)?.snapshotId, undefined, "no image card for a look");
+	assert.equal(saved.length, 0, "nothing saved for the learner");
+
+	const refused = await primer.materi_page?.execute("t", { doc: "d.md", page: 4, highlight: [1, 2] });
+	assert.ok(refused);
+	assert.match(textOf(refused), /^materi_page refused: box one block per call \(got 2: 1, 2\)\. Nothing was shown\./);
+	assert.equal(saved.length, 0, "a refused call shows nothing");
+	assert.deepEqual(calls, [[]], "a refused call does not render the page");
+
+	const one = await primer.materi_page?.execute("t", { doc: "d.md", page: 4, highlight: [2, 2] });
+	assert.match(textOf(one!), /^Shown to the learner: d\.md p\. 4 with block 2 boxed\./, "a repeated number is one block");
+	assert.match(textOf(one!), /write your explanation of block 2 to him as visible reply text/, "the primer is told to explain in visible text");
+	assert.equal(saved.length, 1);
+
+	const teacher = createMateriTools(port, display);
+	const many = await teacher.materi_page?.execute("t", { doc: "d.md", page: 4, highlight: [1, 2] });
+	assert.match(textOf(many!), /^Shown to the learner: d\.md p\. 4 with block 1, 2 boxed\./, "the teacher may box several");
+	assert.doesNotMatch(textOf(many!), /visible reply text/, "the teacher's result is unchanged");
+});
+
 test("teacher registry: materi_page comes with the materi tools when pages can be shown", () => {
 	const base: TeacherToolContext = { chatId: "materi-pages-test", chatStore, jobStore, spawn: () => {} };
 	const port: MateriSearchPort = {

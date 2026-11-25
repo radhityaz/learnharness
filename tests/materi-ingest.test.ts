@@ -131,6 +131,14 @@ test("ingest: a new PDF is OCR'd on weak pages, embedded, indexed, and registere
 		assert.equal(old.status, "duplicate");
 		assert.equal(old.doc, "materi/old.pdf/markdown.md");
 		assert.equal(calls.embed, 0, "a known PDF costs nothing");
+		const filesRoot = path.join(path.dirname(env.index), "materi-files");
+		assert.equal(
+			readSources().docs[0]?.pdf,
+			"materi-files/matkul-mr4062-manajemen-proyek/Slide/old-copy.pdf",
+			"a legacy entry without its PDF adopts the matching file",
+		);
+		assert.ok(fs.existsSync(path.join(filesRoot, "matkul-mr4062-manajemen-proyek", "Slide", "old-copy.pdf")));
+		assert.ok(!fs.existsSync(path.join(dir, "old-copy.pdf")), "the original left the inbox");
 
 		const out = await ingestFile("matkul-mr4062-manajemen-proyek/Slide/ch08.pdf", deps);
 		assert.equal(out.status, "ingested", out.note);
@@ -149,12 +157,17 @@ test("ingest: a new PDF is OCR'd on weak pages, embedded, indexed, and registere
 		const entry = readSources().docs.find((d) => d.origin === "ingested");
 		assert.equal(entry?.pages, 4);
 		assert.deepEqual(entry?.ocrPages, [2, 3]);
+		assert.equal(entry?.pdf, "materi-files/matkul-mr4062-manajemen-proyek/Slide/ch08.pdf");
+		assert.ok(!fs.existsSync(path.join(dir, "ch08.pdf")), "the registered PDF moved out of the inbox");
 		const pagesDir = path.join(path.dirname(env.index), "materi-pages", entry?.sha256 ?? "");
 		assert.ok(fs.existsSync(path.join(pagesDir, "2.png")));
 		assert.match(fs.readFileSync(path.join(pagesDir, "ocr.json"), "utf8"), /sub_title/);
 
+		fs.writeFileSync(path.join(dir, "ch08.pdf"), "new pdf bytes");
 		const again = await ingestFile("matkul-mr4062-manajemen-proyek/Slide/ch08.pdf", deps);
 		assert.equal(again.status, "duplicate");
+		assert.ok(!fs.existsSync(path.join(dir, "ch08.pdf")), "a byte-identical copy of a kept PDF is removed");
+		assert.deepEqual(fs.readdirSync(path.join(filesRoot, "matkul-mr4062-manajemen-proyek", "Slide")).sort(), ["ch08.pdf", "old-copy.pdf"]);
 	} finally {
 		env.restore();
 	}
@@ -268,6 +281,7 @@ test("ingest: a re-downloaded deck (other bytes, same slides) is a duplicate and
 		assert.deepEqual([calls.render, calls.ocr, calls.embed], [[], [], 0], "no OCR, no embedding");
 		assert.equal(readSources().docs.find((d) => d.doc.endsWith("M9-copy.pdf"))?.duplicateOf, "materi/M9.pdf/markdown.md");
 		assert.equal(materiCourses()[0]?.rows, 3, "nothing appended");
+		fs.writeFileSync(path.join(dir, "M9-copy.pdf"), "other bytes");
 		const again = await ingestFile("matkul-ti4005/M9-copy.pdf", deckDeps(copyPages, calls));
 		assert.equal(again.doc, "materi/M9.pdf/markdown.md", "the registered copy points at the original");
 

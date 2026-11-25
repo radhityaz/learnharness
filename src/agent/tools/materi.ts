@@ -13,6 +13,7 @@ import type { ChatStore } from "../../core/ports.ts";
  *   materi_exact(query, course?, limit?)   literal words (codes, names, symbols)
  *   materi_page(doc, page, highlight?)     Priming: show the original page to the
  *                                          learner, boxes drawn around chosen blocks
+ *   materi_blocks(doc, page)               a page's blocks for the agent only (not shown)
  *
  * Two tools, never one merged list: merging literal hits into the semantic
  * ranking lowered accuracy in the retrieval test. The port is injected
@@ -99,21 +100,70 @@ export interface MateriDisplay {
 	chatStore: Pick<ChatStore, "saveImageSnapshot">;
 }
 
-function pageTool(port: MateriSearchPort & Required<Pick<MateriSearchPort, "page">>, display: MateriDisplay): AgentTool<any> {
+const blocksInput = Type.Object({
+	doc: Type.String({ minLength: 1, description: "Document path exactly as materi_search or materi_exact printed it." }),
+	page: Type.Integer({ minimum: 1, description: "Page number." }),
+});
+
+export interface MateriToolOptions {
+	/** Refuse a materi_page call that boxes more than one block (the primer's rule). */
+	oneBlock?: boolean;
+}
+
+/** materi_blocks: a page's numbered blocks for the agent alone; nothing is shown to the learner. */
+function blocksTool(port: MateriSearchPort & Required<Pick<MateriSearchPort, "page">>): AgentTool<any> {
+	return {
+		name: "materi_blocks",
+		label: "materi_blocks",
+		description:
+			"Read a course page's numbered blocks (OCR text) WITHOUT showing anything to the learner. " +
+			"Use it to check whether a page is worth showing, or to plan which block to box, before you call materi_page. " +
+			"materi_page puts the page on the learner's screen; this does not.",
+		parameters: blocksInput,
+		execute: serverExecute("materi_blocks", blocksInput, async ({ doc, page }): Promise<string> => {
+			let view: MateriPageView;
+			try {
+				view = await port.page(doc, page, []);
+			} catch (err) {
+				return `materi_blocks failed: ${err instanceof Error ? err.message : String(err)}`;
+			}
+			const lines = [`Not shown to the learner (read only): ${doc} p. ${page}.`];
+			if (view.note) lines.push(view.note);
+			lines.push("Blocks:", formatBlocks(view));
+			return lines.join("\n");
+		}),
+	};
+}
+
+function pageTool(
+	port: MateriSearchPort & Required<Pick<MateriSearchPort, "page">>,
+	display: MateriDisplay,
+	options: MateriToolOptions = {},
+): AgentTool<any> {
 	return {
 		name: "materi_page",
 		label: "materi_page",
 		description:
 			"Show the learner an original page from their course materials (slide or textbook page) and, optionally, " +
-			"box specific blocks on it. Use it to teach from the source before any quiz: show the page, point at one block, " +
-			"explain it, then box the next. The result lists the page's numbered blocks (title, text, equation, table, image) " +
-			"read by OCR; pass their numbers in highlight on the next call. The image is not sent back to you. " +
+			"box specific blocks on it. Every call puts the page on the learner's screen, so call it only for the page you " +
+			"are about to explain; to look at a page's blocks first, use materi_blocks. Use it to teach from the source " +
+			"before any quiz: show the page, point at one block, explain it, then box the next. The result lists the " +
+			"page's numbered blocks (title, text, equation, table, image) read by OCR; pass their numbers in highlight on " +
+			"the next call. The image is not sent back to you. " +
+			(options.oneBlock ? "Box exactly one block per call (highlight: [n]); a call with more is refused. " : "") +
 			"Boxes surround whole blocks; a figure is one block, so parts inside a diagram cannot be boxed separately.",
 		parameters: pageInput,
 		execute: serverExecute("materi_page", pageInput, async ({ doc, page, highlight, caption }): Promise<ImageFileResult | string> => {
+			const wanted = [...new Set(highlight ?? [])];
+			if (options.oneBlock && wanted.length > 1) {
+				return (
+					`materi_page refused: box one block per call (got ${wanted.length}: ${wanted.join(", ")}). ` +
+					`Nothing was shown. Box block ${wanted[0]} now, explain it, then box the next in its own call.`
+				);
+			}
 			let view: MateriPageView;
 			try {
-				view = await port.page(doc, page, highlight ?? []);
+				view = await port.page(doc, page, wanted);
 			} catch (err) {
 				return `materi_page failed: ${err instanceof Error ? err.message : String(err)}`;
 			}
@@ -136,6 +186,13 @@ function pageTool(port: MateriSearchPort & Required<Pick<MateriSearchPort, "page
 			};
 			const boxed = view.highlighted.length > 0 ? ` with block ${view.highlighted.join(", ")} boxed` : "";
 			const lines = [`Shown to the learner: ${doc} p. ${page}${boxed}.`];
+			if (options.oneBlock) {
+				lines.push(
+					view.highlighted.length > 0
+						? `Now write your explanation of block ${view.highlighted.join(", ")} to him as visible reply text (your thinking is hidden from him) before you call materi_page again.`
+						: "He is looking at the plain page. Give your overview of it in visible reply text before any other materi_page call; do not re-show this page boxed until you have.",
+				);
+			}
 			if (view.note) lines.push(view.note);
 			lines.push("Blocks:", formatBlocks(view));
 			return { text: lines.join("\n"), details };
@@ -143,12 +200,18 @@ function pageTool(port: MateriSearchPort & Required<Pick<MateriSearchPort, "page
 	};
 }
 
-export function createMateriTools(port: MateriSearchPort, display?: MateriDisplay): Record<string, AgentTool<any>> {
+export function createMateriTools(
+	port: MateriSearchPort,
+	display?: MateriDisplay,
+	options: MateriToolOptions = {},
+): Record<string, AgentTool<any>> {
 	const courses = port.courses();
 	const courseList = courses.map((c) => c.matkul).join(", ");
 	const page = port.page;
 	return {
-		...(page && display ? { materi_page: pageTool({ ...port, page }, display) } : {}),
+		...(page && display
+			? { materi_page: pageTool({ ...port, page }, display, options), materi_blocks: blocksTool({ ...port, page }) }
+			: {}),
 		materi_search: {
 			name: "materi_search",
 			label: "materi_search",

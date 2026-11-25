@@ -115,6 +115,17 @@ describe("parseAgentSettingsBody", () => {
 		assert.equal(parseAgentSettingsBody({ graphTools: null }).ok, false);
 	});
 
+	it("priming: strict object subsection, enabled boolean when present", () => {
+		const off = parseAgentSettingsBody({ priming: { enabled: false } });
+		assert.ok(off.ok);
+		assert.deepEqual(off.settings.priming, { enabled: false });
+		const bare = parseAgentSettingsBody({ priming: {} });
+		assert.ok(bare.ok);
+		assert.deepEqual(bare.settings.priming, {}, "explicit subsection with no key = the default ON");
+		assert.equal(parseAgentSettingsBody({ priming: "off" }).ok, false, "priming must be an object");
+		assert.equal(parseAgentSettingsBody({ priming: { enabled: 1 } }).ok, false, "enabled must be a boolean");
+	});
+
 	it("an empty {} agent section parses to {} (replace-whole clear)", () => {
 		const r = parseAgentSettingsBody({});
 		assert.ok(r.ok);
