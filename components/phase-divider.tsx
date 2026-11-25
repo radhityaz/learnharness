@@ -26,6 +26,7 @@ import type { Phase3 } from "@/src/core";
 
 /** Header-chip labels: the phases as the learner thinks of them. */
 const CHIP_LABEL: Record<Phase3, string> = {
+	prime: "Priming",
 	probe: "Probing",
 	plan: "Planning",
 	teach: "Teaching",
@@ -56,11 +57,12 @@ export function PhaseChip({ phase }: { phase: Phase3 }) {
  * the session enters `phase` (owner, minimal-color round — the label
  * carries the transition; the phase color never did). The plan seam
  * carries its node count ("Plan · 4 nodes"); teaching is just the label.
- * Null for probe (defensive — the fold never emits a probe transition
- * after the start).
+ * Null for prime (it only ever opens a session). Probe renders only at the
+ * prime→probe handoff marker; an unprimed session starts in probe with no
+ * divider.
  */
 export function PhaseDivider({ phase, nodeCount }: { phase: Phase3; nodeCount?: number }) {
-	if (phase === "probe") return null;
+	if (phase === "prime") return null;
 	const label =
 		phase === "plan" && nodeCount
 			? `Plan · ${nodeCount} node${nodeCount === 1 ? "" : "s"}`

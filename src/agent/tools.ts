@@ -18,6 +18,7 @@ import type { JobStore } from "../core/ports.ts";
 import { jobTools, type DemoInput, type PdfInput, type ResearchInput, type VisualInput } from "./tools/jobs.ts";
 import { planTools, type PlanToolContext } from "./tools/plan.ts";
 import { probeDoneTool, type ProbeDoneContext } from "./tools/probe.ts";
+import { primeDoneTool, type PrimeDoneContext } from "./tools/prime.ts";
 import { proberGraphTools } from "./tools/graph.ts";
 import { readTool } from "./tools/read.ts";
 import { lsTool } from "./tools/ls.ts";
@@ -25,6 +26,8 @@ import { findTool } from "./tools/find.ts";
 import { grepTool } from "./tools/grep.ts";
 import { createShowImageTool } from "./tools/show-image.ts";
 import { healToolRecord } from "./tools/heal.ts";
+import { createMateriTools, type MateriDisplay } from "./tools/materi.ts";
+import type { MateriSearchPort } from "../core/materi.ts";
 import type { GraphStore } from "../core/ports.ts";
 
 export { jobTools };
@@ -279,6 +282,26 @@ export interface ProberToolContext extends ProbeDoneContext {
 	graphStore?: GraphStore;
 }
 
+/** The primer's registry context: prime_done's needs plus the materi port. */
+export interface PrimerToolContext extends PrimeDoneContext {
+	/** Course-material search; the composition root builds the primer only when it returns a port. */
+	materi: () => MateriSearchPort | null;
+}
+
+/**
+ * The primer's tool set (the phase before the probe): the materi tools
+ * (search, exact, page display) + ask + prime_done. No graded question tool:
+ * priming shows and explains the source, it never quizzes. prime_done is
+ * always on; it is how the phase ends.
+ */
+export function createPrimerTools(ctx: PrimerToolContext): Record<string, AgentTool<any>> {
+	return healToolRecord({
+		...materiToolsFor(ctx.materi, { chatId: ctx.chatId, chatStore: ctx.chatStore }),
+		ask_user_question: askUserQuestionTool,
+		...primeDoneTool(ctx),
+	});
+}
+
 /** The prober's tool set: probe quiz (no nodeId) + ask + the learner-fs
  *  set + probe_done + the two phase-omnipresent job dispatch tools +
  *  (wave 7, gated) the graph-map reader. `enabled` is the resolved
@@ -401,6 +424,9 @@ export interface TeacherToolContext extends PlanToolContext {
 	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput | PdfInput) => void;
 	/** Retained search-status seam; research dispatch is available keylessly. */
 	searchAvailable?: () => boolean;
+	/** Course-material search (materi index). Absent or null = no index
+	 *  installed: the materi tools are left out of the registry. */
+	materi?: () => MateriSearchPort | null;
 }
 
 /**
@@ -430,6 +456,20 @@ function withoutMechanics(enabled?: EnabledTools): EnabledTools | undefined {
 	if (!enabled) return undefined;
 	const { explain: _e, quiz: _q, ...rest } = enabled;
 	return rest;
+}
+
+/** The materi tools when an index is installed; none otherwise. A port that
+ *  fails to load reads as absent (the registry never breaks on it). */
+function materiToolsFor(
+	materi: (() => MateriSearchPort | null) | undefined,
+	display?: MateriDisplay,
+): Record<string, AgentTool<any>> {
+	try {
+		const port = materi?.();
+		return port ? createMateriTools(port, display) : {};
+	} catch {
+		return {};
+	}
 }
 
 export function createTeacherTools(
@@ -463,6 +503,8 @@ export function createTeacherTools(
 			show_image: createShowImageTool(ctx),
 			...planTools(ctx),
 			...jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable }),
+			// Course-material search: present only when an index is installed.
+			...materiToolsFor(ctx.materi, { chatId: ctx.chatId, chatStore: ctx.chatStore }),
 		},
 		withoutMechanics(enabled),
 		),

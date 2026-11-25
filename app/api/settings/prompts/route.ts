@@ -23,6 +23,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
 	const switches = readSettingsRecord()?.agent?.prompts ?? {};
 	return Response.json({
+		primer: effectivePromptSegments("primer", switches),
 		prober: effectivePromptSegments("prober", switches),
 		teacher: effectivePromptSegments("teacher", switches),
 		practice: effectivePromptSegments("practice", switches),

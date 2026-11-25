@@ -5,5 +5,8 @@ export async function register() {
 		const { initializePlugins } = await import("./src/server/plugins.ts");
 		try { await initializePlugins(); }
 		catch (error) { console.error("[plugins] Initialization failed; plugin management will report the error:", error); }
+		// Materi inbox: PDFs dropped into <data>/materi-inbox/<matkul>/ are indexed on their own.
+		try { (await import("./src/server/materi-ingest.ts")).startMateriInbox(); }
+		catch (error) { console.error("[materi] Inbox watcher did not start:", error); }
 	}
 }

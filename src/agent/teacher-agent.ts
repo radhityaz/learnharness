@@ -9,9 +9,11 @@ import { effectivePromptSegments } from "./prompt-segments.ts";
 import {
 	askUserQuestionTool,
 	createProberTools,
+	createPrimerTools,
 	createTeacherTools,
 	type ProbeDoneContext,
 	type ProberToolContext,
+	type PrimerToolContext,
 	type TeacherToolContext,
 } from "./tools.ts";
 import { practiceTools, createPracticeGate, type PracticeGate, type PracticeToolContext } from "./tools/practice.ts";
@@ -54,12 +56,12 @@ import { PluginQuestionLedger, type NativePluginQuestionContribution } from "./p
 
 /** Which agent's prompt directory to compose. Practice (2026-10-04)
  *  composes ONLY its own directory — see prompt-segments.ts. */
-export type AgentKind = "prober" | "teacher" | "practice";
+export type AgentKind = "primer" | "prober" | "teacher" | "practice";
 
 /** Reserve conversation builtins even when role/mechanics/settings gates hide them.
  * New builtin names must join this catalog; actual turn tools are reserved too. */
 export const CONVERSATION_TOOL_NAMES = Object.freeze([
-	...QUESTION_TOOLS, ...TOGGLEABLE_TOOLS, "probe_done", "read", "ls", "find", "grep",
+	...QUESTION_TOOLS, ...TOGGLEABLE_TOOLS, "probe_done", "prime_done", "read", "ls", "find", "grep",
 	"plan_init", "list_sessions", "list_propositions", "problem", "conclude", sendToUserTool.name,
 ] as const);
 
@@ -98,6 +100,7 @@ export function composeInstructions(kind: AgentKind, switches?: Record<string, b
 // an override file written while its switch is ON must flip the next
 // turn's composition; the cache serves only the switches-less path.
 const composedInstructions: Record<AgentKind, string> = {
+	primer: composeInstructions("primer"),
 	prober: composeInstructions("prober"),
 	teacher: composeInstructions("teacher"),
 	practice: composeInstructions("practice"),
@@ -207,7 +210,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 	// the session's conversation engine — practice rides the same
 	// conversation-spec resolution as teaching); the cast keeps AgentKind
 	// ("practice" is not a ModelRole) honest about that.
-	const engine = opts.engine ?? piEngineFor(kind as "prober" | "teacher");
+	const engine = opts.engine ?? piEngineFor((kind === "primer" ? "prober" : kind) as "prober" | "teacher");
 	const stopper = makeQuestionStopper(kind);
 	const narrationGuard = narrationGuardApplies(kind, engine.model, opts.tools !== undefined);
 	const narrationHooks = narrationGuard ? makeNarrationGuard() : undefined;
@@ -225,7 +228,8 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 			? [withArgumentHeal(sendToUserTool)]
 			: []),
 	];
-	const contributions = opts.tools === undefined && opts.chatId && opts.pluginContributions
+	// The primer is not a plugin target (plugins name prober/teacher/practice).
+	const contributions = kind !== "primer" && opts.tools === undefined && opts.chatId && opts.pluginContributions
 		? opts.pluginContributions({ chatId: opts.chatId, agent: kind }, [...CONVERSATION_TOOL_NAMES, ...builtinTools.map(tool => tool.name)])
 		: undefined;
 	const questionLedger = contributions?.questionTypes?.length && opts.chatId
@@ -335,6 +339,10 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
  * handoff wake (see tools/probe.ts) and is the transcript seam the
  * handler keys teacher construction on.
  */
+export function createPrimerAgent(ctx: PrimerToolContext, opts: AgentBuildOptions = {}) {
+	return baseAgentOptions("primer", opts, Object.values(opts.tools ?? createPrimerTools(ctx)));
+}
+
 export function createProberAgent(ctx: ProberToolContext, opts: AgentBuildOptions = {}) {
 	return baseAgentOptions("prober", opts, Object.values(createProberTools(ctx, opts.toolToggles)));
 }
@@ -405,8 +413,9 @@ export function createPracticeAgent(ctx: PracticeToolContext, opts: AgentBuildOp
 	return baseAgentOptions("practice", opts, Object.values(practiceTools(ctx, gate)), undefined, { gate, graphNodes: ctx.graphNodes });
 }
 
+export type PrimerAgent = ReturnType<typeof createPrimerAgent>;
 export type ProberAgent = ReturnType<typeof createProberAgent>;
 export type TeacherAgent = ReturnType<typeof createTeacherAgent>;
 export type PracticeAgent = ReturnType<typeof createPracticeAgent>;
-export type TeachingAgent = ProberAgent | TeacherAgent | PracticeAgent;
+export type TeachingAgent = PrimerAgent | ProberAgent | TeacherAgent | PracticeAgent;
 

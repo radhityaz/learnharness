@@ -2,6 +2,9 @@
  * Teaching-session phases derived sequentially from transcript events,
  * not from plan-tree occupancy or an explicit plan-acceptance flag:
  *
+ * - prime: optional opening phase (course materials installed): from the
+ *   first materi tool call made before any probe activity, until prime_done
+ *   has a successful tool result (or, defensively, the first probe call).
  * - probe: until probe_done has a successful tool result.
  * - plan: after probe completion, until a node-tagged teaching question call.
  * - teach: from that first call onward, without waiting for its answer.
@@ -15,8 +18,24 @@
 import { posedPluginQuestionOfPart } from "./tool-parts.ts";
 import { readPluginQuestionMessageAnnotation } from "./plugin-questions.ts";
 
-/** The three phases of a session, as the picker / header / dividers see them. */
-export type Phase3 = "probe" | "plan" | "teach";
+/** The phases of a session, as the picker / header / dividers see them.
+ *  (The name predates the optional prime phase; it is kept for its importers.) */
+export type Phase3 = "prime" | "probe" | "plan" | "teach";
+
+/** The fold's internal state: "start" is a session with no priming and no
+ *  probe activity yet; it displays as probe (the default opening). */
+type FoldState = "start" | Phase3;
+
+function shown(state: FoldState): Phase3 {
+	return state === "start" ? "probe" : state;
+}
+
+/** Materi tool calls: before any probe activity they mark a primed session. */
+const PRIMING_PART_TYPES = new Set(["tool-materi_search", "tool-materi_exact", "tool-materi_page", "tool-prime_done"]);
+const PRIMING_TOOL_NAMES = new Set(["materi_search", "materi_exact", "materi_page", "prime_done"]);
+/** Probe-phase question calls (the prober's registry names) and its seam. */
+const PROBE_PART_TYPES = new Set(["tool-probe", "tool-recall", "tool-probe_done"]);
+const PROBE_TOOL_NAMES = new Set(["probe", "recall", "probe_done"]);
 
 /**
  * Minimal structural slice of a UI message for the phase scan: parts with
@@ -48,27 +67,41 @@ function isTeachQuestionPart(part: PhaseMessage["parts"][number]): boolean {
 
 /** The phase at `upToIndex` (inclusive; default: the last message). */
 export function phaseAt3(messages: readonly PhaseMessage[], upToIndex?: number): Phase3 {
-	let phase: Phase3 = "probe";
+	let phase: FoldState = "start";
 	const last = Math.min(upToIndex ?? messages.length - 1, messages.length - 1);
 	for (let i = 0; i <= last; i++) {
 		phase = advance(phase, messages[i]?.parts);
 	}
-	return phase;
+	return shown(phase);
 }
 
 /** One message's advance of the phase (pure fold step). */
 function advance(
-	phase: Phase3,
+	phase: FoldState,
 	parts: PhaseMessage["parts"] | undefined,
-): Phase3 {
+): FoldState {
 	if (!parts) return phase;
 	for (const part of parts) {
+		// PRIMING: only from the very start (no probe activity yet); it ends
+		// at a concluded prime_done, or defensively at the first probe call.
+		if (phase === "start" && PRIMING_PART_TYPES.has(part.type)) phase = "prime";
+		if (phase === "start" && PROBE_PART_TYPES.has(part.type)) phase = "probe";
+		if (phase === "prime") {
+			if (PROBE_PART_TYPES.has(part.type)) phase = "probe";
+			else if (
+				part.type === "tool-prime_done" && part.state === "output-available" &&
+				(part.output as { ok?: unknown } | null | undefined)?.ok !== false
+			) {
+				phase = "probe";
+				continue;
+			}
+		}
 		// STRICTLY SEQUENTIAL: probe → plan only via a concluded probe_done,
 		// plan → teach only via the first nodeId-tagged quiz CALL (the call,
 		// not its answer — an errored-and-retried call still proves teaching
 		// began, and the retry lands in the same group anyway).
 		if (
-			phase === "probe" && part.type === "tool-probe_done" && part.state === "output-available" &&
+			(phase === "probe" || phase === "start") && part.type === "tool-probe_done" && part.state === "output-available" &&
 			(part.output as { ok?: unknown } | null | undefined)?.ok !== false
 		) {
 			phase = "plan";
@@ -128,10 +161,10 @@ export function teachStepIndex(
  */
 export function phaseTimeline(messages: readonly PhaseMessage[]): Phase3[] {
 	const out: Phase3[] = [];
-	let phase: Phase3 = "probe";
+	let phase: FoldState = "start";
 	for (let i = 0; i < messages.length; i++) {
 		phase = advance(phase, messages[i]?.parts);
-		out.push(phase);
+		out.push(shown(phase));
 	}
 	return out;
 }
@@ -146,16 +179,31 @@ import { probeDoneResultIds, type LhMessage } from "./native-messages.ts";
  *  nodeId-tagged quiz CALL (mirrors the view fold — same seam, native
  *  shape). */
 export function phaseAt3Lh(messages: readonly LhMessage[], upToIndex?: number): Phase3 {
-	let phase: Phase3 = "probe";
+	let phase = "start" as FoldState;
 	const last = Math.min(upToIndex ?? messages.length - 1, messages.length - 1);
 	const concluded = probeDoneResultIds(messages.slice(0, last + 1));
+	const primeCalls = new Set<string>();
 	for (let i = 0; i <= last; i++) {
 		const m = messages[i]!;
 		const role = (m as { role?: string }).role;
 		if (role === "toolResult") {
-			if (phase === "probe" && concluded.has(m.id)) phase = "plan";
+			const r = m as { toolName?: string; toolCallId?: string; isError?: boolean; details?: unknown };
+			if (
+				phase === "prime" && r.toolName === "prime_done" && r.toolCallId !== undefined && primeCalls.has(r.toolCallId) &&
+				!r.isError && (r.details as { ok?: unknown } | null | undefined)?.ok !== false
+			) {
+				phase = "probe";
+			}
+			if ((phase === "probe" || phase === "start") && concluded.has(m.id)) phase = "plan";
 		} else if (role === "assistant") {
-			const content = (m as { content?: ReadonlyArray<{ type?: string; name?: string; arguments?: unknown }> }).content ?? [];
+			const content = (m as { content?: ReadonlyArray<{ type?: string; name?: string; arguments?: unknown; id?: string }> }).content ?? [];
+			const stop = (m as { stopReason?: string }).stopReason;
+			for (const block of content) {
+				if (block.type !== "toolCall" || block.name === undefined) continue;
+				if (phase === "start" && PRIMING_TOOL_NAMES.has(block.name)) phase = "prime";
+				if ((phase === "start" || phase === "prime") && PROBE_TOOL_NAMES.has(block.name)) phase = "probe";
+				if (phase === "prime" && block.name === "prime_done" && block.id && stop !== "error" && stop !== "aborted") primeCalls.add(block.id);
+			}
 			if (phase === "plan") {
 				for (const [contentIndex, block] of content.entries()) {
 					const annotation = readPluginQuestionMessageAnnotation(m, contentIndex);
@@ -175,5 +223,5 @@ export function phaseAt3Lh(messages: readonly LhMessage[], upToIndex?: number): 
 			}
 		}
 	}
-	return phase;
+	return shown(phase);
 }

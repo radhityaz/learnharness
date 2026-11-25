@@ -75,8 +75,12 @@ describe("PhaseDivider (transcript boundary)", () => {
 		assert.match(html, /Planning/);
 	});
 
-	it("probe renders null (never a boundary — phases only advance)", () => {
-		assert.equal(renderToStaticMarkup(<PhaseDivider phase="probe" />), "");
+	it("prime renders null (it only ever opens a session)", () => {
+		assert.equal(renderToStaticMarkup(<PhaseDivider phase="prime" />), "");
+	});
+
+	it("probe labels the prime→probe handoff seam", () => {
+		assert.match(renderToStaticMarkup(<PhaseDivider phase="probe" />), /data-testid="phase-divider-probe".*Probing/);
 	});
 });
 
