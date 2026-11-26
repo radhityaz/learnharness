@@ -28,6 +28,8 @@ import { activeProblemOf } from "../../core/native-messages.ts";
 import type { LhMessage } from "../../core/native-messages.ts";
 import { concludeResult, invalidInputResult, problemResult } from "../tool-execute.ts";
 import { healEncodedArguments, healToolRecord } from "./heal.ts";
+import { createMateriTools } from "./materi.ts";
+import type { MateriSearchPort } from "../../core/materi.ts";
 
 
 /** The record-reading context the gates need (the plan-tools idiom). */
@@ -45,6 +47,20 @@ export interface PracticeToolContext {
 	 *  Each absent context (tests) = absent from the registry. */
 	graph?: GraphToolContext;
 	jobs?: JobToolContext;
+	/** Course-material search: problems built from the course's own pages.
+	 *  Absent, or a port that returns null = no index, no materi tools. */
+	materi?: () => MateriSearchPort | null;
+}
+
+/** The materi tools when an index is installed; a port that fails reads as absent.
+ *  Search only (no display context): showing a page could hand over the solution. */
+function practiceMateriTools(materi: PracticeToolContext["materi"]): Record<string, AgentTool<any>> {
+	try {
+		const port = materi?.();
+		return port ? createMateriTools(port) : {};
+	} catch {
+		return {};
+	}
 }
 
 /** TURN-SCOPED GATE STATE (the BKT incident, 2026-10-05): the gates used
@@ -215,5 +231,6 @@ export function practiceTools(ctx: PracticeToolContext, gate: PracticeGate = cre
 		...(jobs?.research ? { research: jobs.research } : {}),
 		...(jobs ? { pdf: jobs.pdf! } : {}),
 		...(ctx.graph ? proberGraphTools(ctx.graph) : {}),
+		...practiceMateriTools(ctx.materi),
 	});
 }

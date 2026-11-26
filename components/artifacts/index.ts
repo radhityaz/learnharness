@@ -3,7 +3,7 @@ import type { ArtifactPartProps } from "@/src/core";
 import { DemoCard } from "@/components/artifacts/demo-card";
 import { JobCard, PdfJobCard } from "@/components/artifacts/job-card";
 import { VisualCard } from "@/components/artifacts/visual-card";
-import { ImageCard } from "@/components/artifacts/image-card";
+import { ImageCard, MateriPageCard } from "@/components/artifacts/image-card";
 import { ProbeDoneCard } from "@/components/artifacts/probe-done-card";
 import { ToolCallCard } from "@/components/artifacts/tool-call-card";
 import { ProblemCard, ConcludeCard } from "@/components/practice-cards";
@@ -31,6 +31,13 @@ export const artifactRenderers: Record<string, ComponentType<ArtifactPartProps>>
 	visual: VisualCard,
 	// A learner image shown as-is (issue #363): the picture itself, inline.
 	show_image: ImageCard,
+	// Priming: an original course page (boxes drawn by code), at full column width.
+	materi_page: MateriPageCard,
+	// Course-material search and the tutor-only page read: quiet one-liners
+	// with the query (or document and page) as the headline.
+	materi_search: ToolCallCard,
+	materi_exact: ToolCallCard,
+	materi_blocks: ToolCallCard,
 	// The probe conclusion: the assessment belongs to the learner as much as
 	// to the transcript (docs/archive/probe-teach-split.md §2). Plain v1 card.
 	probe_done: ProbeDoneCard,

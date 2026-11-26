@@ -218,6 +218,15 @@ export function parseAgentSettingsBody(body: unknown): SettingsBodyResult<AgentS
 		}
 		settings.graphTools = graphTools.enabled === undefined ? {} : { enabled: graphTools.enabled };
 	}
+	// Priming switch: same strict write side as graphTools. Absent = ON.
+	if (raw.priming !== undefined) {
+		const priming = asRecord(raw.priming);
+		if (!priming) return { ok: false, error: "priming must be an object" };
+		if (priming.enabled !== undefined && typeof priming.enabled !== "boolean") {
+			return { ok: false, error: "priming.enabled must be a boolean" };
+		}
+		settings.priming = priming.enabled === undefined ? {} : { enabled: priming.enabled };
+	}
 	if (raw.fileAccess !== undefined) {
 		const parsed = parseFileAccessSettings(raw.fileAccess);
 		if (!parsed.ok) return parsed;

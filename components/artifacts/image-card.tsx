@@ -59,14 +59,39 @@ export function ImageCard({ part }: ArtifactPartProps) {
 	return <StoredImageCard details={image} />;
 }
 
-function StoredImageCard({ details }: { details: ShowImageDetails }) {
+/** Priming's course page (materi_page): same stored snapshot as show_image,
+ *  shown at the column's full width so the slide text is readable, and
+ *  labelled with its document and page instead of "Image". */
+export function MateriPageCard({ part }: ArtifactPartProps) {
+	if (part.state !== "output-available") return <ToolCallCard part={part} />;
+	const image = part.output;
+	if (!isShowImageDetails(image)) {
+		// A refused or failed call carries no image: keep the quiet tool-call line.
+		return <ToolCallCard part={part} />;
+	}
+	return <StoredImageCard details={image} variant="page" />;
+}
+
+/** "materi-inbox/x/Slide Kuliah/Week 3.pdf | p. 6" → { title: "Week 3", page: "6" }. Pure — exported for tests. */
+export function materiPageLabel(path: string): { title: string; page: string | null } {
+	const [doc = "", pagePart] = path.split(" | ");
+	const parts = doc.split("/").filter(Boolean);
+	// Old documents end in ".../<file>.pdf/markdown.md"; ingested ones in ".../<file>.pdf".
+	const last = parts.at(-1) === "markdown.md" ? parts.at(-2) : parts.at(-1);
+	const title = (last ?? doc).replace(/\.pdf$/i, "").replace(/ \[[0-9a-f]{6,}\]$/i, "").replace(/_/g, " ");
+	const page = pagePart?.match(/(\d+)/)?.[1] ?? null;
+	return { title, page };
+}
+
+function StoredImageCard({ details, variant = "figure" }: { details: ShowImageDetails; variant?: "figure" | "page" }) {
 	const { image, failed } = useImageSnapshot(details.snapshotId);
 	if (!image) return <div className="my-4 text-sm text-muted-foreground" role="status">{failed ? "Image snapshot could not be loaded." : "Loading image…"}</div>;
-	return <ImagePresentation image={{ ...image, path: details.path, caption: details.caption }} />;
+	return <ImagePresentation image={{ ...image, path: details.path, caption: details.caption }} variant={variant} />;
 }
 
 /** Resolved presentation shared by inline display, download and fullscreen. */
-export function ImagePresentation({ image }: { image: ImageSnapshot & Pick<ShowImageDetails, "path" | "caption"> }) {
+export function ImagePresentation({ image, variant = "figure" }: { image: ImageSnapshot & Pick<ShowImageDetails, "path" | "caption">; variant?: "figure" | "page" }) {
+	const page = variant === "page" ? materiPageLabel(image.path) : null;
 	const overlay = useSessionMermaid();
 	const save = () => {
 		const bytes = Uint8Array.from(atob(image.data), (c) => c.charCodeAt(0));
@@ -76,22 +101,31 @@ export function ImagePresentation({ image }: { image: ImageSnapshot & Pick<ShowI
 		/* Auto dimensions let the width/60vh constraints scale the whole picture
 		   proportionally, never enlarge it. The wrapper hugs its displayed width;
 		   w-0 + min-w-full keeps the caption from widening the card. */
-		<figure className="my-4 mx-auto w-fit max-w-full" data-testid="image-card">
-			<div className="w-fit max-w-full overflow-hidden rounded-lg">
+		<figure className={page ? "my-4 w-full" : "my-4 mx-auto w-fit max-w-full"} data-testid={page ? "materi-page-card" : "image-card"}>
+			<div className={page ? "w-full overflow-hidden rounded-lg" : "w-fit max-w-full overflow-hidden rounded-lg"}>
 				{/* An in-memory image from the record; no Next image optimization. */}
 				{/* eslint-disable-next-line @next/next/no-img-element */}
 				<img
 					src={`data:${image.mimeType};base64,${image.data}`}
-					alt={image.caption ?? baseName(image.path)}
+					alt={image.caption ?? (page ? `${page.title}${page.page ? `, page ${page.page}` : ""}` : baseName(image.path))}
 					width={image.width}
 					height={image.height}
-					className="block h-auto w-auto max-h-[60vh] max-w-full"
+					// A course page is read, not glanced at: full column width,
+					// no height cap (a portrait handout page would shrink to a stamp).
+					className={page ? "block h-auto w-full" : "block h-auto w-auto max-h-[60vh] max-w-full"}
 					draggable={false}
 				/>
 			</div>
 			<figcaption className="mt-2 flex w-0 min-w-full items-start justify-between gap-2">
 				<div className="flex min-w-0 items-baseline gap-2">
-					<span className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">Image</span>
+					{page ? (
+						<span className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground" data-testid="materi-page-label" title={image.path}>
+							{page.page ? `Page ${page.page}` : "Page"}
+						</span>
+					) : (
+						<span className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">Image</span>
+					)}
+					{page && <span className="min-w-0 truncate text-xs text-muted-foreground/80" title={image.path}>{page.title}</span>}
 					{image.caption && (
 						<span className="text-sm text-muted-foreground" data-testid="image-caption">
 							{image.caption}

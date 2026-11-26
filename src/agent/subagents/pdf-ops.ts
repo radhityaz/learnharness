@@ -60,9 +60,9 @@ async function openDocument(filePath: string) {
 }
 
 type PdfLoadingTask = Pick<import("pdfjs-dist/legacy/build/pdf.mjs").PDFDocumentLoadingTask, "promise" | "destroy">;
-type PdfTaskLoader = (data: Uint8Array, signal?: AbortSignal) => PdfLoadingTask | Promise<PdfLoadingTask>;
+type PdfTaskLoader = (data: Uint8Array, signal?: AbortSignal, password?: string) => PdfLoadingTask | Promise<PdfLoadingTask>;
 
-async function loadBytes(data: Uint8Array, signal?: AbortSignal): Promise<PdfLoadingTask> {
+async function loadBytes(data: Uint8Array, signal?: AbortSignal, password?: string): Promise<PdfLoadingTask> {
 	signal?.throwIfAborted();
 	const pdfjs = await loadPdfjs();
 	signal?.throwIfAborted();
@@ -70,12 +70,12 @@ async function loadBytes(data: Uint8Array, signal?: AbortSignal): Promise<PdfLoa
 	// workerSrc needed); teardown is the loading task's destroy().
 	// verbosity 0 = errors only — scanned PDFs (JBIG2 XObjects) otherwise
 	// flood the log with per-page warnings (live-smoke finding 2026-09-19).
-	return pdfjs.getDocument({ data, standardFontDataUrl: standardFontsDir(), verbosity: 0 });
+	return pdfjs.getDocument({ data, standardFontDataUrl: standardFontsDir(), verbosity: 0, ...(password ? { password } : {}) });
 }
 
-async function openBytes(data: Uint8Array, signal?: AbortSignal, loadTask: PdfTaskLoader = loadBytes) {
+async function openBytes(data: Uint8Array, signal?: AbortSignal, loadTask: PdfTaskLoader = loadBytes, password?: string) {
 	signal?.throwIfAborted();
-	const loadingTask = await loadTask(data, signal);
+	const loadingTask = await loadTask(data, signal, password);
 	let destruction: Promise<void> | undefined;
 	const destroy = () => destruction ??= Promise.resolve().then(() => loadingTask.destroy()).finally(() => {
 		signal?.removeEventListener("abort", onAbort);
@@ -198,7 +198,7 @@ export type PdfConversion =
 	| { kind: "converted"; pages: PdfPage[] }
 	| { kind: "too-long"; pageCount: number }
 	/** Broken, encrypted, or not a PDF at all: pdfjs could not read it. */
-	| { kind: "unreadable" };
+	| { kind: "unreadable"; passwordProtected?: boolean };
 
 function isAbortError(error: unknown): boolean {
 	return error instanceof Error && error.name === "AbortError";
@@ -207,13 +207,13 @@ function isAbortError(error: unknown): boolean {
 /** Server-internal loading-task seam for lifecycle tests, not a plugin capability.
  * Both injected and default loaders use the same conversion and cleanup path. */
 export function createPdfConverter(loadTask: PdfTaskLoader = loadBytes) {
-	return async (data: Uint8Array, maxPages: number, options?: { signal?: AbortSignal }): Promise<PdfConversion> => {
+	return async (data: Uint8Array, maxPages: number, options?: { signal?: AbortSignal; password?: string }): Promise<PdfConversion> => {
 		const signal = options?.signal;
 		let opened: Awaited<ReturnType<typeof openBytes>> | undefined;
 		let result: PdfConversion | undefined;
 		let failure: unknown;
 		try {
-			opened = await openBytes(data, signal, loadTask);
+			opened = await openBytes(data, signal, loadTask, options?.password);
 			signal?.throwIfAborted();
 			result = opened.doc.numPages > maxPages
 				? { kind: "too-long", pageCount: opened.doc.numPages }
@@ -231,7 +231,9 @@ export function createPdfConverter(loadTask: PdfTaskLoader = loadBytes) {
 		// cancellation as a corrupt PDF, even when destroy rejects on abort.
 		signal?.throwIfAborted();
 		if (isAbortError(failure)) throw failure;
-		return result ?? { kind: "unreadable" };
+		// pdfjs names a missing or wrong password PasswordException.
+		const passwordProtected = failure instanceof Error && failure.name === "PasswordException";
+		return result ?? (passwordProtected ? { kind: "unreadable", passwordProtected } : { kind: "unreadable" });
 	};
 }
 
@@ -241,7 +243,7 @@ const defaultPdfConverter = createPdfConverter();
  * cap is checked before any page is read. Cancellation is cooperative: pdfjs's
  * Node fake worker cannot interrupt synchronous parsing/formatting. The promise
  * waits for opening/conversion and best-effort destruction, not a hard deadline. */
-export async function convertPdf(data: Uint8Array, maxPages: number, options?: { signal?: AbortSignal }): Promise<PdfConversion> {
+export async function convertPdf(data: Uint8Array, maxPages: number, options?: { signal?: AbortSignal; password?: string }): Promise<PdfConversion> {
 	return defaultPdfConverter(data, maxPages, options);
 }
 

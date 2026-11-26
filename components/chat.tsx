@@ -102,6 +102,7 @@ import type { SessionInputViewReader, SessionViewTargets, NativeQuestionViewStat
 import type { JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, TurnUsage, SessionPricing } from "@/src/core";
 import type { LhViewMessage } from "@/src/core";
 import { PhaseChip, PhaseDivider } from "@/components/phase-divider";
+import { TEACH_OPENING, usePrimingAvailable } from "@/components/use-priming-available";
 import {
 	CompactionCutDivider,
 	CompactionMomentDivider,
@@ -321,7 +322,11 @@ export function Chat({
 	const submissionMounted = useRef(true);
 	useEffect(() => { submissionMounted.current = true; return () => { submissionMounted.current = false; submissionRunner.dispose(); }; }, [submissionRunner]);
 	useEffect(() => () => submissionRunner.dispose(), [surfaceTarget, submissionRunner]);
-	const inputViewReader = useRef<(() => PluginSessionViewInput) | null>(null) as SessionInputViewReader;
+	const primingAvailable = usePrimingAvailable();
+	// A plain object, not a useRef: React's dev build seals ref objects, so
+	// adding `changed` to one threw "object is not extensible" (a 500 when a
+	// session URL was opened directly).
+	const [inputViewReader] = useState<SessionInputViewReader>(() => ({ current: null }));
 	const refreshPluginActions = useRef<(() => void) | null>(null);
 	const notifyViewChanged = useCallback(() => { if (submissionMounted.current) refreshPluginActions.current?.(); }, []);
 	inputViewReader.changed = notifyViewChanged;
@@ -1751,7 +1756,7 @@ export function Chat({
 							{messages.length === 0 && !busy && (
 								<ConversationEmptyState
 									title="New session"
-									description="The teacher will open by probing what you already know."
+									description={kind !== "practice" && primingAvailable ? TEACH_OPENING.priming : TEACH_OPENING.probe}
 								/>
 							)}
 
@@ -1772,7 +1777,11 @@ export function Chat({
 								// Wave D grouping merged the whole probe into one giant
 								// assistant group — is gone). Never a user bubble: the wake is
 								// scaffolding; the model-facing instruction lives in the adapter.
-								<PhaseDivider key={m.id || `m-${mi}`} phase="plan" />
+								<PhaseDivider
+									key={m.id || `m-${mi}`}
+									// The prime→probe wake shares the marker kind; its details say which seam it is.
+									phase={(m.parts.find((p) => p.type === "data-probe-handoff") as { data?: { stage?: string } } | undefined)?.data?.stage === "probe" ? "probe" : "plan"}
+								/>
 							) : m.role === "user" && m.parts.length > 0 && m.parts.every((p) => p.type.startsWith("data-")) ? (
 								// Marker cards (custom messages, 2026-10-04): user-side
 								// scaffolding — the graph-context pick, the practice
@@ -2501,9 +2510,10 @@ export function DockOverlay({
 	const readingInputRef = useRef<HTMLDivElement>(null);
 	const ownsDock = !!pending || !!pluginQuestion || unreadablePlugin || !!practice;
 	const initialPendingRef = useRef(pendingId);
-	const nativeViewReader = useRef<(() => NativeQuestionViewState) | null>(null) as ViewReaderRef<NativeQuestionViewState>;
-	const practiceViewReader = useRef<(() => string) | null>(null) as ViewReaderRef<string>;
-	const customViewReader = useRef<(() => { available: boolean }) | null>(null) as ViewReaderRef<{ available: boolean }>;
+	// Plain objects, not useRef (sealed in React's dev build; see inputViewReader in Chat).
+	const [nativeViewReader] = useState<ViewReaderRef<NativeQuestionViewState>>(() => ({ current: null }));
+	const [practiceViewReader] = useState<ViewReaderRef<string>>(() => ({ current: null }));
+	const [customViewReader] = useState<ViewReaderRef<{ available: boolean }>>(() => ({ current: null }));
 	nativeViewReader.changed = practiceViewReader.changed = customViewReader.changed = viewReader?.changed;
 
 	// Teach-question ARRIVAL state, applied during render — BEFORE the

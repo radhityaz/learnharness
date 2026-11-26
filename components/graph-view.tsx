@@ -69,7 +69,7 @@ import { PluginGraphActions } from "@/components/plugin-chrome";
 import { SettingsSlider as SettingSlider } from "@/components/settings/controls";
 import Link from "next/link";
 import { FileTextIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, WaypointsIcon } from "lucide-react";
-import { incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
+import { courseLabel, courseVisibleIds, graphCourses, incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
 import { planCostLabel } from "@/components/usage-format";
 import { CLUSTER_LIGHTNESS, GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
 import { useAppearance } from "@/components/settings/appearance";
@@ -815,6 +815,9 @@ export function GraphChromeRow({
 	settings,
 	changeSettings,
 	onOpenChains,
+	courses = [],
+	course = null,
+	onCourse,
 }: {
 	isEmpty: boolean;
 	query: string;
@@ -830,9 +833,35 @@ export function GraphChromeRow({
 	/** Opens the chain table overlay (the chains-overlay plan,
 	 *  2026-09-29). */
 	onOpenChains: () => void;
+	/** Courses (matkul) present in the graph, largest first — the per-course
+	 *  filter (core/graph-courses.ts). The picker shows only when at least one
+	 *  source belongs to a course. */
+	courses?: { course: string; nodes: number }[];
+	course?: string | null;
+	onCourse?: (course: string | null) => void;
 }) {
 	return (
 		<>
+			{!isEmpty && courses.length > 0 && onCourse && (
+				<div className="graph-chrome-fade-in min-w-0 shrink rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
+					<Hint label="Show one course's graph" side="bottom">
+						<select
+							value={course ?? ""}
+							onChange={(e) => onCourse(e.target.value === "" ? null : e.target.value)}
+							aria-label="Course"
+							data-testid="graph-course"
+							className="h-7 max-w-44 truncate rounded-lg border bg-background px-2 text-xs outline-none focus:border-ring"
+						>
+							<option value="">All courses</option>
+							{courses.map((c) => (
+								<option key={c.course} value={c.course}>
+									{courseLabel(c.course)} ({c.nodes})
+								</option>
+							))}
+						</select>
+					</Hint>
+				</div>
+			)}
 			{!isEmpty && (
 				<div className="graph-chrome-fade-in w-56 min-w-0 shrink rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
 					<Hint
@@ -975,6 +1004,9 @@ export function GraphView({
 
 	// Search panel state: the query text + the settings section toggle.
 	const [query, setQuery] = useState("");
+	// Per-course filter (null = every course). A course that leaves the graph
+	// (its chats deleted) falls back to all rather than showing an empty stage.
+	const [pickedCourse, setCourse] = useState<string | null>(null);
 	// Surface-scoped Find: the chains overlay owns it while open.
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	// Render settings: SERVER-persisted (data/render-settings.json via
@@ -1045,14 +1077,18 @@ export function GraphView({
 
 	// The id set that survives the current search — consumed by the
 	// visibility feed and the "no matches" hint.
+	const courses = useMemo(() => (snapshot ? graphCourses(snapshot) : []), [snapshot]);
+	const course = pickedCourse !== null && courses.some((c) => c.course === pickedCourse) ? pickedCourse : null;
 	const visibleIds = useMemo(() => {
 		const set = new Set<string>();
-		if (snapshot)
+		if (snapshot) {
+			const inCourse = course === null ? null : courseVisibleIds(snapshot, course);
 			for (const node of snapshot.nodes) {
-				if (isNodeVisible(node, query)) set.add(node.id);
+				if ((inCourse === null || inCourse.has(node.id)) && isNodeVisible(node, query)) set.add(node.id);
 			}
+		}
 		return set;
-	}, [snapshot, query]);
+	}, [snapshot, query, course]);
 
 	// Fetch the derived graph. Re-runs when a background pipeline run
 	// finishes (refreshTick) — its merges just landed in the ledger.
@@ -1437,10 +1473,10 @@ export function GraphView({
 	// Feed #3 — visibility: hidden nodes drop out of rendering, picking,
 	// hover, AND labels; edges drop when either endpoint is hidden.
 	useEffect(() => {
-		rendererRef.current?.setVisible(query.trim() ? visibleIds : null);
+		rendererRef.current?.setVisible(query.trim() || course !== null ? visibleIds : null);
 		// The open detail card cannot outlive its node's visibility.
 		setSelected((sel) => (sel && visibleIds.has(sel.node.id) ? sel : null));
-	}, [visibleIds, query]);
+	}, [visibleIds, query, course]);
 
 	// Feed #4 — region tuning. `isEmpty` in the deps (same as Feed #2):
 	// the settings fetch resolves BEFORE the snapshot creates the renderer,
@@ -1592,6 +1628,9 @@ export function GraphView({
 					settings={settings}
 					changeSettings={changeSettings}
 					onOpenChains={() => setChainsOpen(true)}
+					courses={courses}
+					course={course}
+					onCourse={setCourse}
 				/>
 			</div>
 

@@ -373,6 +373,10 @@ export interface AgentSettings {
 	 *  tool-toggles map. Absent = enabled (the toggle discipline); the
 	 *  effective gate composes graph.enabled AND this switch. */
 	graphTools?: { enabled?: boolean };
+	/** Priming (the phase before the probe): Teach sessions open on the
+	 *  learner's own course pages when a materi index is installed. Absent =
+	 *  enabled (the toggle discipline); off = sessions open with the probe. */
+	priming?: { enabled?: boolean };
 	/** System-prompt override SWITCHES keyed by segment path (absent key =
 	 *  off). Switch-on requires the override file to exist (enforced by the
 	 *  route); the switch is explicit so users keep a file on disk but run
@@ -755,6 +759,12 @@ function sanitizeAgent(raw: Record<string, unknown>): AgentSettings {
 		const enabled = (raw.graphTools as Record<string, unknown>).enabled;
 		if (enabled === undefined) out.graphTools = {};
 		else if (typeof enabled === "boolean") out.graphTools = { enabled };
+	}
+	// Priming switch: same lenient read side as graphTools.
+	if (raw.priming !== null && typeof raw.priming === "object" && !Array.isArray(raw.priming)) {
+		const enabled = (raw.priming as Record<string, unknown>).enabled;
+		if (enabled === undefined) out.priming = {};
+		else if (typeof enabled === "boolean") out.priming = { enabled };
 	}
 	// Never drop a malformed access policy into the unrestricted default.
 	// The strict store reader separately reports its configuration error;

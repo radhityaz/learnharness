@@ -33,7 +33,7 @@ import {
 	type ReactNode,
 	type RefObject,
 } from "react";
-import { BotIcon, KeyIcon, KeyboardIcon, PaletteIcon, PlugIcon, PuzzleIcon, SettingsIcon, WaypointsIcon, type LucideIcon } from "lucide-react";
+import { BookOpenIcon, BotIcon, KeyIcon, KeyboardIcon, PaletteIcon, PlugIcon, PuzzleIcon, SettingsIcon, WaypointsIcon, type LucideIcon } from "lucide-react";
 import { HostDialog } from "@/components/host-dialog";
 import { useInteractionLayers, type CloseOutcome } from "@/components/interaction-layers";
 import {
@@ -48,6 +48,7 @@ import { useAppearance } from "./appearance.tsx";
 import { SettingsSection } from "./controls.tsx";
 import { UpdateSettings } from "./update-settings.tsx";
 import { AgentSection } from "./agent-section.tsx";
+import { MaterialsSection } from "./materials-section.tsx";
 import type { ModelsSettings } from "@/src/core";
 import { MENU_CLOSE_EVENT, MENU_OPEN_EVENT } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
@@ -67,6 +68,7 @@ import { NativeSubscriptionUIProvider } from "./subscription-connections.tsx";
 const SECTIONS = [
 	{ id: "keys", label: "Providers", icon: KeyIcon },
 	{ id: "agent", label: "Agent", icon: BotIcon },
+	{ id: "materials", label: "Course materials", icon: BookOpenIcon },
 	{ id: "appearance", label: "Appearance", icon: PaletteIcon },
 	{ id: "graph", label: "Graph", icon: WaypointsIcon },
 	{ id: "keyboard", label: "Keyboard", icon: KeyboardIcon, hint: "Stored on this device" },
@@ -480,6 +482,19 @@ export function SettingsDialogBody({
 										}
 										onCompactionChange={(next: CompactionSettings) =>
 											write("compaction", next)
+										}
+									/>
+								</SettingsSection>
+							)}
+							{active === "materials" && (
+								<SettingsSection
+									title="Course materials"
+									testid="section-materials"
+								>
+									<MaterialsSection
+										agent={record.agent}
+										onSectionChange={(next: AgentSettings) =>
+											write("agent", next)
 										}
 									/>
 								</SettingsSection>

@@ -51,6 +51,8 @@ export interface RenderSvgOptions {
 export interface RenderPdfOptions {
 	/** Render DPI — 72 is 100% zoom; the skill's guidance is 100/150/200. */
 	dpi?: number;
+	/** Password of a password-protected PDF. */
+	password?: string;
 }
 
 export interface RenderedPdfPage {
@@ -581,7 +583,7 @@ async function renderPdfPages(
 	// Standard-font data as a directory path (live-smoke finding 2026-09-19:
 	// without it pdfjs renders non-embedded standard fonts via fallback);
 	// verbosity 0 = errors only (JBIG2 noise on scanned PDFs).
-	const loadingTask = pdfjs.getDocument({ data, standardFontDataUrl: standardFontsDir(), verbosity: 0 });
+	const loadingTask = pdfjs.getDocument({ data, standardFontDataUrl: standardFontsDir(), verbosity: 0, ...(opts.password ? { password: opts.password } : {}) });
 	const doc = await loadingTask.promise;
 	try {
 		const out: RenderedPdfPage[] = [];

@@ -46,6 +46,7 @@ import {
 	NEXT_PROBLEM_TEXT,
 	THINKING_LABEL,
 } from "./contracts/chat.ts";
+import { PRIME_HANDOFF_TEXT } from "./contracts/prime.ts";
 import { compactAnswerForModel, type QuestionAnswerData } from "./question-core.ts";
 import { activeCompactionOf, keptIndexFor } from "./compaction.ts";
 import { parseQuestionInput } from "./tool-parts.ts";
@@ -275,6 +276,21 @@ export function newHandoffMessage(chatId: string): LhMarkerMessage {
 		content: HANDOFF_TEXT,
 		display: true,
 		details: { chatId },
+		timestamp: Date.now(),
+	};
+}
+
+/** The prime→probe handoff wake. Same marker kind as the probe handoff (the
+ *  wake pipeline treats both alike); `details.stage` tells the UI which
+ *  divider it is, and the deterministic id keeps it one per chat. */
+export function newPrimeHandoffMessage(chatId: string): LhMarkerMessage {
+	return {
+		id: `steer_prime_${chatId}`,
+		role: "custom",
+		customType: "probe-handoff",
+		content: PRIME_HANDOFF_TEXT,
+		display: true,
+		details: { chatId, stage: "probe" },
 		timestamp: Date.now(),
 	};
 }
@@ -920,6 +936,57 @@ export function probeDoneResultIds(messages: readonly LhMessage[]): Set<string> 
  *  only a concluded call plus a matching successful result means teach. */
 export function hasProbeDone(messages: readonly LhMessage[]): boolean {
 	return probeDoneResultIds(messages).size > 0;
+}
+
+/** Concluded prime_done calls: a non-failed call plus a matching successful result. */
+export function hasPrimeDone(messages: readonly LhMessage[]): boolean {
+	const calls = new Set<string>();
+	for (const m of messages) {
+		if (m.role === "assistant") {
+			if (m.stopReason === "error" || m.stopReason === "aborted") continue;
+			for (const block of m.content) {
+				if (block.type === "toolCall" && block.name === "prime_done") calls.add(block.id);
+			}
+		} else if (
+			m.role === "toolResult" && m.toolName === "prime_done" && calls.has(m.toolCallId) && !m.isError &&
+			(m.details as { ok?: unknown } | null | undefined)?.ok !== false
+		) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** Tools whose call means the probe has begun (prober question tools and its seam). */
+const PROBE_ACTIVITY_TOOLS = new Set(["probe", "recall", "probe_done"]);
+/** Tools only the primer carries before the probe; their call marks a primed session. */
+export const PRIMING_TOOLS = new Set(["materi_search", "materi_exact", "materi_page", "materi_blocks"]);
+
+/**
+ * Is the session still in its priming phase? Only when priming is offered
+ * (course materials installed), no prime_done has concluded, and no probe
+ * activity exists. A session with assistant turns must also show priming
+ * activity (a materi tool call): the primer always opens with a search, so
+ * a record without one is an ordinary probing session (an older record, or
+ * one started before materials were installed) and never drops back into
+ * priming.
+ */
+export function primingOpen(messages: readonly LhMessage[], offered: boolean): boolean {
+	if (!offered) return false;
+	if (hasPrimeDone(messages)) return false;
+	let assistantTurns = 0;
+	let primed = false;
+	for (const m of messages) {
+		if (m.role !== "assistant") continue;
+		if (m.stopReason === "error" || m.stopReason === "aborted") continue;
+		assistantTurns++;
+		for (const block of m.content) {
+			if (block.type !== "toolCall") continue;
+			if (PROBE_ACTIVITY_TOOLS.has(block.name)) return false;
+			if (PRIMING_TOOLS.has(block.name)) primed = true;
+		}
+	}
+	return assistantTurns === 0 || primed;
 }
 
 /** Every toolResult id in the record — answer-event validation (the call

@@ -68,6 +68,7 @@ import { MIN_CLUSTER_SIZE } from "./clusters.ts";
 import { formatChainLine } from "./chains.ts";
 import { attachImpToCommunities, birthSessionOf, birthSessionPartition } from "./session-clusters.ts";
 import { sourceFileLabel } from "./source-label.ts";
+import { chatCourses, fileCourses } from "./graph-courses.ts";
 import type { ChatStore, GraphStore } from "./ports.ts";
 
 /** The storage ports every graph operation needs, passed explicitly. */
@@ -537,6 +538,7 @@ export function graphSnapshot(deps: GraphDeps, sourceNames: Readonly<Record<stri
 	}
 	const sessions: Record<string, string> = {};
 	const fileSources: Record<string, string> = {};
+	const sourceCourses: Record<string, string[]> = {};
 	// One read of the sources map per snapshot: readSources() re-reads and
 	// re-parses sources.json on every call.
 	const sourcePaths = new Map(deps.graphStore.readSources().map((s) => [s.id, s.filePath]));
@@ -544,10 +546,16 @@ export function graphSnapshot(deps: GraphDeps, sourceNames: Readonly<Record<stri
 		const chat = deps.chatStore.getChat(id);
 		if (chat) {
 			sessions[id] = chat.title;
+			const courses = chatCourses(chat.messages);
+			if (courses.length > 0) sourceCourses[id] = courses;
 			continue;
 		}
 		const filePath = sourcePaths.get(id);
-		if (filePath !== undefined) fileSources[id] = filePath;
+		if (filePath !== undefined) {
+			fileSources[id] = filePath;
+			const courses = fileCourses(filePath);
+			if (courses.length > 0) sourceCourses[id] = courses;
+		}
 	}
 
 	const nodeSessions: Record<string, string[]> = {};
@@ -601,6 +609,7 @@ export function graphSnapshot(deps: GraphDeps, sourceNames: Readonly<Record<stri
 		sessions,
 		fileSources,
 		nodeSessions,
+		sourceCourses,
 		clusters,
 		...(Object.keys(positions).length > 0 ? { positions } : {}),
 	};

@@ -77,6 +77,21 @@ describe("GraphChromeRow — the empty-graph ruling (owner, 2026-09-25)", () => 
 		);
 		assert.ok(!quiet.includes("No matching nodes."));
 	});
+
+	it("the course picker shows only when the graph has courses, labelled code + name with counts", () => {
+		const courses = [{ course: "matkul-mr4062-manajemen-proyek", nodes: 12 }, { course: "matkul-ti3105-sistem-produksi", nodes: 3 }];
+		const html = renderToStaticMarkup(
+			createElement(GraphChromeRow, { ...PROPS, isEmpty: false, courses, course: "matkul-ti3105-sistem-produksi", onCourse: () => {} }),
+		);
+		assert.ok(html.includes('data-testid="graph-course"'));
+		assert.ok(html.includes("All courses"));
+		assert.ok(html.includes("MR4062 manajemen proyek (12)"));
+		assert.ok(html.includes('value="matkul-ti3105-sistem-produksi" selected=""'), "the picked course is selected");
+		const none = renderToStaticMarkup(createElement(GraphChromeRow, { ...PROPS, isEmpty: false, courses: [], onCourse: () => {} }));
+		assert.ok(!none.includes('data-testid="graph-course"'), "no courses, no picker");
+		const empty = renderToStaticMarkup(createElement(GraphChromeRow, { ...PROPS, isEmpty: true, courses, onCourse: () => {} }));
+		assert.ok(!empty.includes('data-testid="graph-course"'), "an empty graph has nothing to filter");
+	});
 });
 
 /** The node detail card renders its name and statement like other tool

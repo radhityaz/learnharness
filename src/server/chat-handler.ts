@@ -2,6 +2,7 @@ import type { Usage } from "@earendil-works/pi-ai";
 import {
 	createPracticeAgent,
 	createProberAgent,
+	createPrimerAgent,
 	createTeacherAgent,
 	type AgentBuildOptions,
 	type TeachingAgent,
@@ -36,6 +37,7 @@ import { effectiveSettings, stores } from "./stores.ts";
 import { getPluginAgentContributions, getPluginHost } from "./plugins.ts";
 import { preparePluginQuestionSubmission, reconcilePluginQuestionCompatibility, type QuestionTypeResolver } from "./plugin-questions.ts";
 import { searchAvailable, searchProvider } from "./search.ts";
+import { materiSearchPort } from "./materi-index.ts";
 import { prepareSubmissionImages, prepareSubmissionImageChannels, prepareProblemSubmissionImageChannels, submissionImagePolicyKey } from "./submission-images.ts";
 import { preparePluginProblemSubmission, requirePluginProblemTarget, type ProblemTypeResolver } from "./plugin-problems.ts";
 import { providerKeyPresent } from "./keys.ts";
@@ -43,6 +45,7 @@ import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
 import {
 	extractionEnabled,
 	graphToolsEnabled,
+	primingEnabled,
 	resolveConversationSpec,
 	resolveRoleSpec,
 } from "../core/settings-resolution.ts";
@@ -55,7 +58,7 @@ import { sideChats, type SideChatService } from "./side-chat.ts";
 import { SIDE_CONTEXT_BUDGET_ERROR, sideBudgetRetryDrops, sideContextWindow } from "./side-context-budget.ts";
 import { registerTurn, rememberTurnFailure, unregisterTurn } from "./turn-runs.ts";
 import { persistTurn, triggerExtraction, TurnPersistenceError } from "./turn-service.ts";
-import { hasProbeDone, hasUnresolvedQuestion, pendingPluginQuestionOf, pluginQuestionCallsOf, questionCallsOf } from "../core/native-messages.ts";
+import { hasProbeDone, primingOpen, hasUnresolvedQuestion, pendingPluginQuestionOf, pluginQuestionCallsOf, questionCallsOf } from "../core/native-messages.ts";
 import { samePluginQuestionOccurrence } from "../core/plugin-questions.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
 import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight } from "./compaction.ts";
@@ -183,7 +186,7 @@ setFileAccessPolicy(fileAccessPolicy);
 /** The route-facing entry: parse {chatId, input} and run one turn. */
 export async function handleChatRequest(
 	req: Request,
-	buildAgent?: (opts: AgentBuildOptions & { teaching: boolean }) => TeachingAgent,
+	buildAgent?: (opts: AgentBuildOptions & { teaching: boolean; priming?: boolean }) => TeachingAgent,
 	sideContext: Pick<SideChatService, "snapshot"> = sideChats,
 ): Promise<Response> {
 	let body: { chatId?: unknown; input?: unknown };
@@ -214,7 +217,7 @@ export async function handleChatRequest(
 export async function handleChatInput(
 	chatId: string,
 	input: TurnInput,
-	buildAgent?: (opts: AgentBuildOptions & { teaching: boolean }) => TeachingAgent,
+	buildAgent?: (opts: AgentBuildOptions & { teaching: boolean; priming?: boolean }) => TeachingAgent,
 	sideContext: Pick<SideChatService, "snapshot"> = sideChats,
 ): Promise<Response> {
 	await reconcilePluginQuestionCompatibility(stores.chatStore, chatId);
@@ -641,6 +644,18 @@ export async function handleChatInput(
 	// Both share this whole composition (write-ahead persist, liveness,
 	// steers, usage, extraction) — only the agent differs.
 	const teaching = hasProbeDone(agentMessages);
+	// PRIMING (the phase before the probe): offered only for teach sessions
+	// when a materi index is installed and the Priming switch is on; the
+	// record decides whether it is still open (core/native-messages.ts
+	// primingOpen). Switching it off mid-priming hands the session to the probe.
+	const primingPort = !teaching && record.kind !== "practice" && primingEnabled(effective) ? (() => {
+		try {
+			return materiSearchPort();
+		} catch {
+			return null; // a broken index never blocks the session; it just probes
+		}
+	})() : null;
+	const priming = primingPort !== null && primingOpen(agentMessages, true);
 	// BYOK (owner, 2026-09-22): the conversation chain was resolved by the
 	// turn gate above (chat.model override → strong slot → refused) — the
 	// engine build is pure from here; thinking levels clamp natively.
@@ -732,7 +747,7 @@ export async function handleChatInput(
 	// problem + conclude. buildAgent stays honored (the test seam is
 	// uniform across kinds).
 	const constructed: TeachingAgent = buildAgent
-		? buildAgent({ ...agentOpts, teaching })
+		? buildAgent({ ...agentOpts, teaching, priming })
 		: record.kind === "practice"
 			? createPracticeAgent(
 					{
@@ -754,6 +769,18 @@ export async function handleChatInput(
 							searchAvailable,
 						},
 						...(graphToolsEnabled(effective) ? { graph: { chatStore: stores.chatStore, graphStore: stores.graphStore } } : {}),
+						// Course-material search: no installed index = no materi tools.
+						materi: materiSearchPort,
+					},
+					agentOpts,
+				)
+			: priming
+			? createPrimerAgent(
+					{
+						chatId,
+						chatStore: stores.chatStore,
+						deliver: (steer) => void deliverJobResult(steer),
+						materi: () => primingPort,
 					},
 					agentOpts,
 				)
@@ -767,6 +794,8 @@ export async function handleChatInput(
 						// The registry drop's signal (2026-09-20): no live engine
 						// = no research tool in the teacher's registry.
 						searchAvailable,
+						// Course-material search: no installed index = no materi tools.
+						materi: materiSearchPort,
 					},
 					agentOpts,
 				)
@@ -785,6 +814,8 @@ export async function handleChatInput(
 						// knowledge graph through tools when the gate opens —
 						// graph master switch AND the agent.graphTools toggle.
 						...(graphToolsEnabled(effective) ? { graphStore: stores.graphStore } : {}),
+						// Course-material search: questions grounded in the course's pages.
+						materi: materiSearchPort,
 					},
 					agentOpts,
 				);

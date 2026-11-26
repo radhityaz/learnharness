@@ -408,6 +408,13 @@ describe("sectionedSegments — actual per-agent prompt membership", () => {
 		assert.deepEqual(ids, ["teacher", "prober", "practice", "shared"]);
 	});
 
+	it("a primer view adds its own section after Prober", () => {
+		const withPrimer = { ...view, primer: [{ path: "primer/10-priming.md", sourceText: "p", overrideText: null, enabled: false, shared: false }] };
+		const sections = sectionedSegments(withPrimer);
+		assert.deepEqual(sections.map((s) => s.id), ["teacher", "prober", "primer", "practice", "shared"]);
+		assert.deepEqual(sections[2]!.segments.map((s) => s.path), ["primer/10-priming.md"]);
+	});
+
 	it("shared chunks appear exactly ONCE across all sections (no duplication)", () => {
 		const all = sectionedSegments(view).flatMap((s) => s.segments.map((seg) => seg.path));
 		assert.equal(all.filter((p) => p === "system-prompt.md").length, 1);
