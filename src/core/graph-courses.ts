@@ -83,23 +83,23 @@ export function courseLabel(course: string): string {
  *  `course === null` keeps everything. */
 export function courseVisibleIds(
 	snapshot: {
-		nodes: readonly { id: string }[];
-		nodeSessions: Readonly<Record<string, readonly string[]>>;
+		nodes?: readonly { id: string }[];
+		nodeSessions?: Readonly<Record<string, readonly string[]>>;
 		sourceCourses?: Readonly<Record<string, readonly string[]>>;
-		impLinks: readonly { id: string; premises: readonly string[]; conclusion: string }[];
+		impLinks?: readonly { id: string; premises: readonly string[]; conclusion: string }[];
 	},
 	course: string | null,
 ): Set<string> {
 	const ids = new Set<string>();
 	if (course === null) {
-		for (const node of snapshot.nodes) ids.add(node.id);
+		for (const node of snapshot.nodes ?? []) ids.add(node.id);
 		return ids;
 	}
 	const of = snapshot.sourceCourses ?? {};
-	for (const [nodeId, sources] of Object.entries(snapshot.nodeSessions)) {
+	for (const [nodeId, sources] of Object.entries(snapshot.nodeSessions ?? {})) {
 		if (sources.some((s) => of[s]?.includes(course))) ids.add(nodeId);
 	}
-	for (const link of snapshot.impLinks) {
+	for (const link of snapshot.impLinks ?? []) {
 		if (ids.has(link.conclusion) && link.premises.some((p) => ids.has(p))) ids.add(link.id);
 	}
 	return ids;
@@ -107,14 +107,15 @@ export function courseVisibleIds(
 
 /** Courses present in the graph with their proposition counts, largest first. */
 export function graphCourses(snapshot: {
-	propositions: readonly { id: string }[];
-	nodeSessions: Readonly<Record<string, readonly string[]>>;
+	propositions?: readonly { id: string }[];
+	nodeSessions?: Readonly<Record<string, readonly string[]>>;
 	sourceCourses?: Readonly<Record<string, readonly string[]>>;
 }): { course: string; nodes: number }[] {
 	const of = snapshot.sourceCourses ?? {};
 	const counts = new Map<string, number>();
-	for (const node of snapshot.propositions) {
-		const courses = new Set((snapshot.nodeSessions[node.id] ?? []).flatMap((s) => of[s] ?? []));
+	// Partial snapshots (older payloads, test fixtures) carry no courses.
+	for (const node of snapshot.propositions ?? []) {
+		const courses = new Set((snapshot.nodeSessions?.[node.id] ?? []).flatMap((s) => of[s] ?? []));
 		for (const c of courses) counts.set(c, (counts.get(c) ?? 0) + 1);
 	}
 	return [...counts].map(([course, nodes]) => ({ course, nodes })).sort((a, b) => b.nodes - a.nodes || a.course.localeCompare(b.course));

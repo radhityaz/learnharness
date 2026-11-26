@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { beforeSweep, tempDir } from "./helpers/temp-dir.ts";
+import { closeFts } from "../src/server/materi-index.ts";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,6 +30,9 @@ import {
 	scanInbox,
 	type IngestDeps,
 } from "../src/server/materi-ingest.ts";
+
+// Close the cached FTS handle before the temp index dirs are removed.
+beforeSweep(closeFts);
 
 const OCR_RAW =
 	"<｜ref｜>sub_title<｜/ref｜><｜box｜>[[56,0,728,65]]<｜/box｜> # Forward pass\n" +
@@ -61,7 +66,7 @@ test("matkulFromInboxPath takes the first folder", () => {
 });
 
 function tempEnv(): { index: string; inbox: string; restore: () => void } {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "lh-ingest-"));
+	const root = tempDir("lh-ingest-");
 	const index = path.join(root, "materi-index");
 	const inbox = path.join(root, "materi-inbox");
 	fs.mkdirSync(inbox, { recursive: true });

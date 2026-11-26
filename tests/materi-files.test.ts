@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { tempDir } from "./helpers/temp-dir.ts";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -8,7 +9,7 @@ import test from "node:test";
 import { materiFilesDir, sourcePdfPath, storeSourcePdf } from "../src/server/materi-files.ts";
 
 function tempData(): { root: string; restore: () => void } {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "lh-files-"));
+	const root = tempDir("lh-files-");
 	const prev = process.env.LH_MATERI_INDEX_DIR;
 	process.env.LH_MATERI_INDEX_DIR = path.join(root, "materi-index");
 	return {

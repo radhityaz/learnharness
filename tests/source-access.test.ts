@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { tempDir } from "./helpers/temp-dir.ts";
 import * as fs from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import * as os from "node:os";
@@ -11,7 +12,7 @@ import type { ChatStore, JobStore } from "../src/core/ports.ts";
 
 // Set this test process's locations BEFORE importing config/agent modules.
 // Never read or modify the developer's actual home, keys or learning data.
-const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "lh-source-access-")));
+const root = await fs.realpath(tempDir("lh-source-access-"));
 const home = path.join(root, "home");
 const auth = path.join(root, "private", "custom-keys.json");
 const data = path.join(root, "private", "data");
@@ -31,7 +32,13 @@ async function write(relative: string, body = "LH_SYNTHETIC_SECRET_MARKER\n"): P
 	return file;
 }
 async function link(target: string, alias: string, directory = false): Promise<void> {
-	await fs.symlink(target, alias, directory ? (process.platform === "win32" ? "junction" : "dir") : "file");
+	try {
+		await fs.symlink(target, alias, directory ? (process.platform === "win32" ? "junction" : "dir") : "file");
+	} catch (error) {
+		// Setup failed (Windows without symlink rights): leave no synthetic files behind.
+		await fs.rm(root, { recursive: true, force: true });
+		throw error;
+	}
 }
 
 await write("home/notes/topic.md", "ordinary study notes\n");

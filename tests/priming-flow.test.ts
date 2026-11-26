@@ -5,6 +5,8 @@
  * index the same session builds the prober from turn 1.
  */
 import assert from "node:assert/strict";
+import { beforeSweep, tempDir } from "./helpers/temp-dir.ts";
+import { closeFts } from "../src/server/materi-index.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -23,6 +25,9 @@ import type { PiEngine } from "../src/agent/models.ts";
 import { PATHS } from "../config.ts";
 
 process.env.OPENROUTER_API_KEY ??= "test-key-presence-gate";
+
+// Close the cached FTS handle before the temp index dirs are removed.
+beforeSweep(closeFts);
 
 const createdChats: string[] = [];
 let indexDir = "";
@@ -53,7 +58,7 @@ function writeIndex(dir: string): void {
 }
 
 before(() => {
-	indexDir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-priming-"));
+	indexDir = tempDir("lh-priming-");
 	writeIndex(indexDir);
 	process.env.LH_MATERI_INDEX_DIR = indexDir;
 	buildMateriFts();

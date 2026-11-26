@@ -75,5 +75,9 @@ describe("graph courses — which matkul a source belongs to", () => {
 			{ course: TI, nodes: 2 },
 		]);
 		assert.deepEqual(graphCourses({ ...snapshot, sourceCourses: undefined }), []);
+		// A partial snapshot (older payload, a test fixture) must not crash the graph view.
+		assert.deepEqual(graphCourses({}), []);
+		assert.equal(courseVisibleIds({}, MR).size, 0);
+		assert.equal(courseVisibleIds({ nodes: [{ id: "a" }] }, null).size, 1);
 	});
 });
