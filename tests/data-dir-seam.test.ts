@@ -9,6 +9,7 @@
  * below) and the "unset" case needs a fresh child process.
  */
 import assert from "node:assert/strict";
+import { tempDir } from "./helpers/temp-dir.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -20,7 +21,7 @@ const TSX_LOADER = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "loader.m
 
 describe("LH_DATA_DIR seam", () => {
 	it("relocates data/chats/graph under LH_DATA_DIR, keeps prompts ROOT-anchored", async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-seam-"));
+		const dir = tempDir("lh-seam-");
 		process.env.LH_DATA_DIR = dir;
 		try {
 			const { PATHS, ROOT } = await import("../config.ts");

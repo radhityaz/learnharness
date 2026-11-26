@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { tempDir } from "./helpers/temp-dir.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,7 +29,7 @@ function whitePng(width = 400, height = 300): Buffer {
 }
 
 function setup(): { restore: () => void; doc: string } {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "lh-pages-"));
+	const root = tempDir("lh-pages-");
 	const index = path.join(root, "materi-index");
 	fs.mkdirSync(index, { recursive: true });
 	const pdf = path.join(root, "ch08.pdf");

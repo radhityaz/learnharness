@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { beforeSweep, tempDir } from "./helpers/temp-dir.ts";
+import { closeFts } from "../src/server/materi-index.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +13,9 @@ import { EMBED_MODEL } from "../src/core/pdf-index.ts";
 import { buildMateriFts, exactSearchMateri, ftsTerms, materiSearchPort } from "../src/server/materi-index.ts";
 import { chatStore } from "../src/store/chats.ts";
 import { jobStore } from "../src/store/jobs.ts";
+
+// Close the cached FTS handle before the temp index dirs are removed.
+beforeSweep(closeFts);
 
 const COURSES = [
 	{ matkul: "matkul-mr4062-manajemen-proyek", rows: 3 },
@@ -58,7 +63,7 @@ test("ftsTerms quotes every term, keeps phrases, drops punctuation-only terms", 
 });
 
 test("exact search: all terms, any-term fallback, course filter, page de-duplication, stale stamp", () => {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-materi-"));
+	const dir = tempDir("lh-materi-");
 	const prev = process.env.LH_MATERI_INDEX_DIR;
 	process.env.LH_MATERI_INDEX_DIR = dir;
 	try {

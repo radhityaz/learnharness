@@ -458,7 +458,8 @@ export function buildMateriFts(): number {
 let ftsDb: DatabaseSync | undefined;
 let ftsDbPath: string | undefined;
 
-function closeFts(): void {
+/** Releases the cached FTS handle (tests: lets the index dir be deleted). */
+export function closeFts(): void {
 	ftsDb?.close();
 	ftsDb = undefined;
 	ftsDbPath = undefined;

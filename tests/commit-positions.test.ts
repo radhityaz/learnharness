@@ -14,12 +14,13 @@
  * tests/data-dir-seam.test.ts).
  */
 import assert from "node:assert/strict";
+import { tempDir } from "./helpers/temp-dir.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { before, describe, it } from "node:test";
 
-process.env.LH_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "lh-pos-commit-"));
+process.env.LH_DATA_DIR = tempDir("lh-pos-commit-");
 
 let commitPositions: (input: unknown) => Record<string, { x: number; y: number }>;
 let readPositions: () => Record<string, { x: number; y: number }>;
