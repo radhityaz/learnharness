@@ -899,6 +899,30 @@ export class GraphCanvasRenderer {
 		);
 	}
 
+	/** Frame only these nodes (a course filter): the camera moves, kFit — the
+	 *  label gate's whole-graph reference — does not. Unknown ids are
+	 *  ignored; nothing to frame leaves the camera where it is. */
+	frame(ids: ReadonlySet<string>): void {
+		if (!this.data) return;
+		const w = this.canvas.clientWidth;
+		const h = this.canvas.clientHeight;
+		if (w < 10 || h < 10) return;
+		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+		for (const n of this.data.nodes) {
+			if (!ids.has(n.id)) continue;
+			if (n.x < minX) minX = n.x;
+			if (n.y < minY) minY = n.y;
+			if (n.x > maxX) maxX = n.x;
+			if (n.y > maxY) maxY = n.y;
+		}
+		if (minX === Infinity) return;
+		const t = fitTransform({ minX, maxX, minY, maxY }, w, h, 80);
+		const k = Math.min(t.k, this.kFit * 4);
+		const cx = (minX + maxX) / 2;
+		const cy = (minY + maxY) / 2;
+		select(this.canvas).call(this.zoomBehavior.transform, zoomIdentity.translate(w / 2 - cx * k, h / 2 - cy * k).scale(k));
+	}
+
 	/** Refresh the label-gate's "1×" reference from the current bbox +
 	 *  viewport. kFit feeds ONLY zoomRatioOf now (the 2026-09-15 pivot
 	 *  removed it from geometry) — so this never touches geoVersion. */

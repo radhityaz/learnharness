@@ -345,6 +345,144 @@ export async function ingestFile(relative: string, deps: IngestDeps = defaultDep
 	}
 }
 
+// ─── backfill: pages of indexed documents that never got a row ────────────
+
+export interface BackfillOutcome {
+	doc: string;
+	matkul: string;
+	/** Pages of the PDF with no row in the index (before this run). */
+	missing: number;
+	/** Missing pages whose text already exists elsewhere in the course: left out, never OCR'd. */
+	twins: number;
+	/** Missing pages indexed from their text layer. */
+	textPages: number;
+	/** Missing pages sent to OCR (planned, in a dry run). */
+	ocrPages: number;
+	chunks: number;
+	embedTokens: number;
+	note?: string;
+}
+
+/** Page numbers with at least one row, per document, for one course shard. */
+export function indexedPages(matkul: string): Map<string, Set<number>> {
+	const file = path.join(/* turbopackIgnore: true */ materiIndexDir(), `${matkul}.rows.json`);
+	const byDoc = new Map<string, Set<number>>();
+	if (!fs.existsSync(file)) return byDoc;
+	for (const [doc, page] of JSON.parse(fs.readFileSync(file, "utf8")) as [string, number | null, number, number][]) {
+		if (page === null) continue;
+		let pages = byDoc.get(doc);
+		if (!pages) byDoc.set(doc, (pages = new Set()));
+		pages.add(page);
+	}
+	return byDoc;
+}
+
+/**
+ * Indexes the pages of an already registered document that have no row yet
+ * (older imports dropped figure pages and pages whose text did not survive).
+ * Same rules as ingest: pages whose text already exists in the course are
+ * left out before any OCR is paid for, weak pages are OCR'd, figure pages
+ * carry the document title. Pages left out are recorded in skippedPages so a
+ * second run does not look at them again. `dryRun` reads and compares only:
+ * no OCR, no embedding, nothing written.
+ */
+export async function backfillDoc(
+	entry: MateriSourceEntry,
+	indexed: ReadonlySet<number>,
+	deps: IngestDeps = defaultDeps(),
+	opts: { dryRun?: boolean } = {},
+): Promise<BackfillOutcome> {
+	const out: BackfillOutcome = { doc: entry.doc, matkul: entry.matkul, missing: 0, twins: 0, textPages: 0, ocrPages: 0, chunks: 0, embedTokens: 0 };
+	if (entry.duplicateOf) return { ...out, note: "A duplicate: nothing of it is indexed on purpose." };
+	const abs = sourcePdfPath(entry);
+	if (!abs || !fs.existsSync(abs)) return { ...out, note: "No PDF on disk." };
+	const password = pdfPassword(entry.sha256 ?? undefined);
+	const converted = await deps.convert(new Uint8Array(fs.readFileSync(abs)), password);
+	if (converted === "password" || !converted) return { ...out, note: "The PDF could not be read." };
+
+	const skippedBefore = new Set(entry.skippedPages ?? []);
+	const missing = converted.filter((p) => !indexed.has(p.number) && !skippedBefore.has(p.number));
+	out.missing = missing.length;
+	if (missing.length === 0) return out;
+
+	const text = new Map<number, string>();
+	for (const p of missing) if (p.kind === "text") text.set(p.number, p.markdown);
+	const course = (deps.courseWords ?? courseWordSets)(entry.matkul);
+	const early = matchPages([...text].map(([page, t]) => ({ page, text: t })), course);
+	const weak = new Set(missing.filter((p) => p.kind === "image-only" || (p.kind === "text" && needsVision(p.markdown))).map((p) => p.number));
+	const toOcr = [...weak].filter((page) => !early.matches.has(page));
+	out.twins = early.matches.size;
+	out.ocrPages = toOcr.length;
+	out.textPages = missing.filter((p) => p.kind === "text" && !weak.has(p.number) && !early.matches.has(p.number)).length;
+	if (opts.dryRun) return out;
+
+	const ocrDone: number[] = [];
+	if (toOcr.length > 0) {
+		const ocrDir = path.join(/* turbopackIgnore: true */ materiPagesDir(), entry.sha256 ?? sha256(new Uint8Array(fs.readFileSync(abs))));
+		fs.mkdirSync(ocrDir, { recursive: true });
+		const ocrFile = path.join(/* turbopackIgnore: true */ ocrDir, "ocr.json");
+		let ocrRaw: Record<number, string> = {};
+		try {
+			ocrRaw = JSON.parse(fs.readFileSync(ocrFile, "utf8")) as Record<number, string>;
+		} catch {
+			// first OCR for this file
+		}
+		const rendered = await deps.render(abs, toOcr, password);
+		await mapLimit(rendered, OCR_CONCURRENCY, async ({ page, png }) => {
+			fs.writeFileSync(path.join(/* turbopackIgnore: true */ ocrDir, `${page}.png`), png);
+			const raw = await deps.ocr(png, `${page}.png`);
+			ocrRaw[page] = raw;
+			const recognized = ocrToText(raw);
+			if (recognized.length >= (text.get(page) ?? "").trim().length) text.set(page, recognized);
+			ocrDone.push(page);
+		});
+		fs.writeFileSync(ocrFile, JSON.stringify(ocrRaw));
+	}
+
+	const late = matchPages(ocrDone.map((page) => ({ page, text: text.get(page) ?? "" })), course);
+	const skipped = new Set<number>([...early.matches.keys(), ...late.matches.keys()]);
+	out.twins = skipped.size;
+	const kept = missing.filter((p) => !skipped.has(p.number));
+	const chunks = withPageContext(
+		kept.flatMap((p) => chunkPage(p.number, text.get(p.number) ?? "")),
+		{
+			docTitle: docTitleFromFile(entry.pdf ?? entry.doc),
+			pages: kept.map((p) => p.number),
+			figurePages: new Set(kept.filter((p) => p.kind === "image-only" || ocrDone.includes(p.number)).map((p) => p.number)),
+		},
+	);
+	const vectors: Float32Array[] = [];
+	for (let i = 0; i < chunks.length; i += EMBED_BATCH) {
+		const res = await deps.embed(chunks.slice(i, i + EMBED_BATCH).map(embedText));
+		vectors.push(...res.vectors);
+		out.embedTokens += res.tokens;
+	}
+	appendToMateriIndex(
+		entry.matkul,
+		chunks.map((c, i) => ({ doc: entry.doc, page: c.page, text: embedText(c), vector: vectors[i] as Float32Array })),
+	);
+	out.chunks = chunks.length;
+	// Pages with nothing to index (blank, no picture) count as done too.
+	const withRows = new Set(chunks.map((c) => c.page));
+	for (const p of kept) if (!withRows.has(p.number)) skipped.add(p.number);
+	const merge = (a: number[] | undefined, b: Iterable<number>) => [...new Set([...(a ?? []), ...b])].sort((x, y) => x - y);
+	const fresh = readSources();
+	writeSources({
+		...fresh,
+		docs: fresh.docs.map((d) =>
+			d.doc === entry.doc
+				? {
+						...d,
+						pages: converted.length,
+						...(ocrDone.length > 0 ? { ocrPages: merge(d.ocrPages, ocrDone) } : {}),
+						...(skipped.size > 0 ? { skippedPages: merge(d.skippedPages, skipped) } : {}),
+					}
+				: d,
+		),
+	});
+	return out;
+}
+
 /** A free PDF name next to `abs`: "x.pdf", else "x (pptx).pdf". */
 function pdfNameFor(abs: string): string {
 	const { dir, name, ext } = path.parse(abs);

@@ -1478,6 +1478,19 @@ export function GraphView({
 		setSelected((sel) => (sel && visibleIds.has(sel.node.id) ? sel : null));
 	}, [visibleIds, query, course]);
 
+	// Picking a course frames its nodes; back to every course frames the
+	// whole graph. Only a CHANGE of course moves the camera — a snapshot
+	// refetch under the same course keeps the user's pan/zoom.
+	const framedCourse = useRef<string | null>(null);
+	useEffect(() => {
+		if (framedCourse.current === course) return;
+		framedCourse.current = course;
+		const renderer = rendererRef.current;
+		if (!renderer) return;
+		if (course === null) renderer.fit();
+		else renderer.frame(visibleIds);
+	}, [course, visibleIds]);
+
 	// Feed #4 — region tuning. `isEmpty` in the deps (same as Feed #2):
 	// the settings fetch resolves BEFORE the snapshot creates the renderer,
 	// so the load-time run hits a null renderer and would never re-fire —
