@@ -9,7 +9,8 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { createTeacherTools, type TeacherToolContext } from "../src/agent/tools.ts";
 import { createMateriTools, formatBlocks } from "../src/agent/tools/materi.ts";
 import type { MateriSearchPort } from "../src/core/materi.ts";
-import { materiPage, type PageDeps } from "../src/server/materi-pages.ts";
+import { TOOL_TIMEOUT_OVERRIDES_MS } from "../src/agent/tool-execute.ts";
+import { materiPage, ocrBudgetMs, type PageDeps } from "../src/server/materi-pages.ts";
 import { chatStore } from "../src/store/chats.ts";
 import { jobStore } from "../src/store/jobs.ts";
 
@@ -112,6 +113,46 @@ test("materiPage still shows the page when OCR fails", async () => {
 		assert.match(view.note ?? "", /Blocks unavailable: No DeepSeek API key.*Not highlighted: the page has no blocks/);
 	} finally {
 		env.restore();
+	}
+});
+
+test("a slow first OCR answers within its budget, keeps reading, and is paid for once", async () => {
+	const env = setup();
+	const budget = ocrBudgetMs.current;
+	try {
+		ocrBudgetMs.current = 40;
+		let calls = 0;
+		let finish: (raw: string) => void = () => {};
+		const deps: PageDeps = {
+			render: async () => whitePng(),
+			ocr: () => {
+				calls++;
+				return new Promise<string>((resolve) => {
+					finish = resolve;
+				});
+			},
+		};
+		const [first, retry] = await Promise.all([materiPage(env.doc, 7, [], deps), materiPage(env.doc, 7, [], deps)]);
+		assert.equal(calls, 1, "the retry waits for the same OCR instead of paying again");
+		for (const view of [first, retry]) {
+			assert.equal(view.blocks, null);
+			assert.match(view.note ?? "", /still being read/);
+		}
+		finish(OCR_RAW);
+		await new Promise((r) => setTimeout(r, 20));
+		const later = await materiPage(env.doc, 7, [], deps);
+		assert.equal(calls, 1, "the finished OCR was cached");
+		assert.ok((later.blocks?.length ?? 0) > 0);
+		assert.equal(later.note, undefined);
+	} finally {
+		ocrBudgetMs.current = budget;
+		env.restore();
+	}
+});
+
+test("materi tools that OCR get a longer timeout than the page budget", () => {
+	for (const tool of ["materi_blocks", "materi_page"]) {
+		assert.ok((TOOL_TIMEOUT_OVERRIDES_MS[tool] ?? 0) > ocrBudgetMs.current + 10_000, tool);
 	}
 });
 

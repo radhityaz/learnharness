@@ -52,6 +52,42 @@ function readOcrCache(dir: string): Record<string, string> {
 	}
 }
 
+/** How long one call waits for a page's first OCR before answering without
+ *  blocks. The OCR keeps running and caches its result, so the next call for
+ *  that page is instant. Must stay under the materi tools' timeout
+ *  (tool-execute TOOL_TIMEOUT_OVERRIDES_MS). Test seam. */
+export const ocrBudgetMs = { current: 75_000 };
+
+/** One OCR per page at a time: a second call for the same page (the model
+ *  retrying while the first is still reading) waits for the same result
+ *  instead of paying for the page again. */
+const ocrInFlight = new Map<string, Promise<string>>();
+
+function ocrOnce(dir: string, page: number, png: Buffer, deps: PageDeps): Promise<string> {
+	const key = `${dir}|${page}`;
+	const running = ocrInFlight.get(key);
+	if (running) return running;
+	const job = (async () => {
+		const raw = await deps.ocr(png, `${page}.png`);
+		const fresh = readOcrCache(dir);
+		fresh[String(page)] = raw;
+		fs.writeFileSync(path.join(/* turbopackIgnore: true */ dir, "ocr.json"), JSON.stringify(fresh));
+		return raw;
+	})().finally(() => ocrInFlight.delete(key));
+	ocrInFlight.set(key, job);
+	return job;
+}
+
+class StillReading extends Error {}
+
+function within<T>(job: Promise<T>, ms: number): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new StillReading()), ms);
+	});
+	return Promise.race([job, late]).finally(() => clearTimeout(timer));
+}
+
 function pngSize(png: Buffer): { width: number; height: number } {
 	return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
 }
@@ -123,13 +159,15 @@ export async function materiPage(
 	const cache = readOcrCache(dir);
 	let raw = cache[String(page)];
 	if (raw === undefined) {
+		const job = ocrOnce(dir, page, png, deps);
+		job.catch(() => {}); // a late failure after the budget is not an unhandled rejection
 		try {
-			raw = await deps.ocr(png, `${page}.png`);
-			const fresh = readOcrCache(dir);
-			fresh[String(page)] = raw;
-			fs.writeFileSync(path.join(/* turbopackIgnore: true */ dir, "ocr.json"), JSON.stringify(fresh));
+			raw = await within(job, ocrBudgetMs.current);
 		} catch (error) {
-			note = `Blocks unavailable: ${error instanceof Error ? error.message : String(error)}`;
+			note =
+				error instanceof StillReading
+					? "Blocks not ready yet: this page is still being read for the first time. Ask for it again in about a minute; it will be instant then."
+					: `Blocks unavailable: ${error instanceof Error ? error.message : String(error)}`;
 		}
 	}
 	if (raw !== undefined) blocks = parseOcrBlocks(raw);

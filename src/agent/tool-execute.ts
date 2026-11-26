@@ -44,7 +44,16 @@ import { CONCLUDE_ACK_TEXT } from "../core/contracts/chat.ts";
  * result the model can see.
  */
 const TOOL_TIMEOUT_MS = 30_000;
-/** Test seam (runner.ts's pdfModelOverride idiom). */
+/** Tools whose honest work outlasts the default: a course page's first OCR
+ *  (render + DeepSeek OCR) takes up to a minute. materi-pages answers
+ *  within its own budget (75s, without blocks when OCR is still running),
+ *  so these caps are a backstop, not the normal path. */
+export const TOOL_TIMEOUT_OVERRIDES_MS: Readonly<Record<string, number>> = {
+	materi_blocks: 90_000,
+	materi_page: 90_000,
+};
+/** Test seam (runner.ts's pdfModelOverride idiom). `current` wins when a
+ *  test lowers it below an override. */
 export const toolTimeoutMs = { current: TOOL_TIMEOUT_MS };
 
 /** How long an aborted/timed-out call may take to settle on its own before
@@ -63,7 +72,8 @@ function runWithAbortGuard<T>(
 		if (parent.aborted) controller.abort();
 		else parent.addEventListener("abort", forwardAbort, { once: true });
 	}
-	const timeoutMs = toolTimeoutMs.current;
+	const override = TOOL_TIMEOUT_OVERRIDES_MS[toolName];
+	const timeoutMs = override !== undefined && toolTimeoutMs.current === TOOL_TIMEOUT_MS ? override : toolTimeoutMs.current;
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	const humanTimeout = timeoutMs >= 1_000 ? `${Math.round(timeoutMs / 1000)}s` : `${timeoutMs}ms`;
 	let graceTimer: ReturnType<typeof setTimeout> | undefined;
