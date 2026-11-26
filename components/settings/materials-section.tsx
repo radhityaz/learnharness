@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { AgentSettings } from "@/src/core";
+import { formatDollars, type AgentSettings, type VoyageSpend } from "@/src/core";
 import { SettingsGroup, SettingsRow, Toggle } from "./controls.tsx";
 
 /**
@@ -33,6 +33,15 @@ interface MaterialsStatus {
 	courses: CourseStatus[];
 	inbox: string;
 	recent: IngestLine[];
+	voyage?: VoyageSpend;
+}
+
+/** One line per model: "voyage-4-large · 12,345 tokens · $0.0015 list, free allowance left". Pure — exported for tests. */
+export function voyageLine(m: VoyageSpend["models"][number]): string {
+	const tokens = `${m.tokens.toLocaleString("en-US")} tokens`;
+	if (m.listDollars === null) return `${m.model} · ${tokens} · unpriced`;
+	const billed = m.billedDollars && m.billedDollars > 0 ? `billed ${formatDollars(m.billedDollars)}` : "within the free allowance";
+	return `${m.model} · ${tokens} · ${formatDollars(m.listDollars)} at list price, ${billed}`;
 }
 
 /** "matkul-mr4062-manajemen-proyek" → "MR4062 Manajemen Proyek". Pure — exported for tests. */
@@ -148,8 +157,10 @@ export function MaterialsSection({
 			{status && (
 				<SettingsGroup label="Adding material" testid="group-inbox">
 					<p className="text-xs text-muted-foreground">
-						Drop a PDF into a course folder inside the inbox; it is indexed within a few minutes while LearnHarness runs.
-						Pages already indexed are skipped, and only pages without a text layer are sent to OCR.
+						Drop a PDF, Word or PowerPoint file into a course folder inside the inbox; it is indexed within a few minutes while
+						LearnHarness runs (Word and PowerPoint are converted to PDF with LibreOffice or Microsoft Office). Pages already
+						indexed are skipped, and only pages without a text layer are sent to OCR. For a password-protected PDF, put the
+						password in a text file named like the PDF plus <code>.password</code> next to it.
 					</p>
 					<code className="block break-all rounded-md bg-muted px-2 py-1.5 text-xs" data-testid="materials-inbox">
 						{status.inbox}
@@ -171,6 +182,27 @@ export function MaterialsSection({
 								</li>
 							))}
 						</ul>
+					)}
+				</SettingsGroup>
+			)}
+
+			{status?.voyage && (
+				<SettingsGroup label="Search spend (Voyage)" testid="group-voyage">
+					{status.voyage.calls === 0 ? (
+						<p className="text-xs text-muted-foreground">No Voyage calls recorded yet.</p>
+					) : (
+						<>
+							<p className="text-xs text-muted-foreground" data-testid="voyage-total">
+								{status.voyage.calls.toLocaleString("en-US")} calls since {when(status.voyage.since ?? "")}:{" "}
+								{formatDollars(status.voyage.listDollars)} at list price, billed {formatDollars(status.voyage.billedDollars)}.
+								Each model has a one-time free allowance of 200M tokens per account.
+							</p>
+							<ul className="flex flex-col gap-1 text-xs" data-testid="voyage-models">
+								{status.voyage.models.map((m) => (
+									<li key={m.model} className="tabular-nums">{voyageLine(m)}</li>
+								))}
+							</ul>
+						</>
 					)}
 				</SettingsGroup>
 			)}

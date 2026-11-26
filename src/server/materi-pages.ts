@@ -16,18 +16,19 @@ import type { MateriPageView } from "../core/materi.ts";
 import { getHeadless } from "../agent/subagents/headless.ts";
 import { deepseekOcr, materiPagesDir, readSources } from "./materi-ingest.ts";
 import { sourcePdfPath } from "./materi-files.ts";
+import { pdfPassword } from "./materi-passwords.ts";
 
 const PAGE_DPI = 150;
 const HIGHLIGHT = "#e5484d";
 
 export interface PageDeps {
-	render(pdfPath: string, page: number): Promise<Buffer>;
+	render(pdfPath: string, page: number, password?: string): Promise<Buffer>;
 	ocr(png: Buffer, name: string): Promise<string>;
 }
 
 const liveDeps: PageDeps = {
-	render: async (pdfPath, page) => {
-		const [out] = await getHeadless().renderPdfPages(pdfPath, [page], { dpi: PAGE_DPI });
+	render: async (pdfPath, page, password) => {
+		const [out] = await getHeadless().renderPdfPages(pdfPath, [page], { dpi: PAGE_DPI, password });
 		if (!out) throw new Error(`Page ${page} is outside the document.`);
 		return out.png;
 	},
@@ -113,7 +114,7 @@ export async function materiPage(
 	let png: Buffer;
 	if (fs.existsSync(pngFile)) png = fs.readFileSync(pngFile);
 	else {
-		png = await deps.render(entry.pdf as string, page);
+		png = await deps.render(entry.pdf as string, page, pdfPassword(entry.sha256 ?? undefined));
 		fs.writeFileSync(pngFile, png);
 	}
 

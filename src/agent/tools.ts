@@ -280,6 +280,8 @@ export interface ProberToolContext extends ProbeDoneContext {
 	 *  master switch AND the agent.graphTools toggle (settings-resolution).
 	 *  Absent = the gate is closed, no map tools (tests drive this seam). */
 	graphStore?: GraphStore;
+	/** Course-material search: absent or null = no index installed, no materi tools. */
+	materi?: () => MateriSearchPort | null;
 }
 
 /** The primer's registry context: prime_done's needs plus the materi port. */
@@ -363,6 +365,10 @@ export function createProberTools(
 				...(ctx.graphStore
 					? proberGraphTools({ chatStore: ctx.chatStore, graphStore: ctx.graphStore })
 					: {}),
+				// Course-material search: the prober grounds its questions in the
+				// course's own pages. Search only (no display context): showing a
+				// page while measuring could hand over the answer.
+				...materiToolsFor(ctx.materi),
 				...done,
 			},
 				withoutMechanics(enabled),

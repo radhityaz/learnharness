@@ -25,6 +25,7 @@ import path from "node:path";
 import { PATHS } from "../../config.ts";
 import {
 	chunkPage,
+	docTitleFromFile,
 	embedText,
 	isDuplicateDoc,
 	matchPages,
@@ -34,6 +35,7 @@ import {
 	type IngestChunk,
 	type MateriSourceEntry,
 	type MateriSources,
+	withPageContext,
 } from "../core/materi-ingest.ts";
 import { NEAR_COPY_MIN_WORDS, needsVision, pageWords } from "../core/pdf-index.ts";
 import { convertPdf } from "../agent/subagents/pdf-ops.ts";
@@ -42,6 +44,8 @@ import { getHeadless } from "../agent/subagents/headless.ts";
 import { keyValue } from "./keys.ts";
 import { appendToMateriIndex, courseWordSets, embedDocuments, materiIndexDir } from "./materi-index.ts";
 import { sourcePdfPath, storeSourcePdf } from "./materi-files.ts";
+import { pdfPassword, readSidecar, savePdfPassword, sidecarStamp } from "./materi-passwords.ts";
+import { isOfficeFile, officeConverter, type OfficeConverter } from "./office-convert.ts";
 
 const DEEPSEEK_OCR_URL = "https://api.deepseek.com/v1/tools/ocr";
 /** Documented account limit is 15 recognitions in progress; stay well under it. */
@@ -55,13 +59,15 @@ const SETTLE_MS = 30_000;
 const SCAN_INTERVAL_MS = 120_000;
 
 export interface IngestDeps {
-	/** Pages as Markdown; null when the PDF cannot be read. */
-	convert(data: Uint8Array): Promise<PdfPage[] | null>;
-	render(pdfPath: string, pages: number[]): Promise<{ page: number; png: Buffer }[]>;
+	/** Pages as Markdown; null when the PDF cannot be read, "password" when it needs a (right) password. */
+	convert(data: Uint8Array, password?: string): Promise<PdfPage[] | null | "password">;
+	render(pdfPath: string, pages: number[], password?: string): Promise<{ page: number; png: Buffer }[]>;
 	/** Raw OCR output for one page image. */
 	ocr(png: Buffer, name: string): Promise<string>;
 	embed(texts: string[]): Promise<{ vectors: Float32Array[]; tokens: number }>;
 	now(): Date;
+	/** Word/PowerPoint to PDF (default: LibreOffice or Microsoft Office, whichever is installed). */
+	office?(): OfficeConverter | null;
 	/** Word sets of the course's indexed chunks (default: read from the index). */
 	courseWords?(matkul: string): { doc: string; words: ReadonlySet<string> }[];
 }
@@ -76,6 +82,8 @@ export interface IngestOutcome {
 	pages?: number;
 	ocrPages?: number;
 	chunks?: number;
+	/** The Word/PowerPoint file this PDF was made from. */
+	convertedFrom?: string;
 	embedTokens?: number;
 	note?: string;
 }
@@ -121,7 +129,7 @@ function sha256(data: Uint8Array): string {
 	return createHash("sha256").update(data).digest("hex");
 }
 
-/** PDFs under the inbox, recursively, as inbox-relative forward-slash paths. */
+/** PDFs and Word/PowerPoint files under the inbox, recursively, as inbox-relative forward-slash paths. */
 export function listInbox(root = materiInboxDir()): string[] {
 	const out: string[] = [];
 	const walk = (dir: string) => {
@@ -134,7 +142,7 @@ export function listInbox(root = materiInboxDir()): string[] {
 		for (const e of entries) {
 			const full = path.join(/* turbopackIgnore: true */ dir, e.name);
 			if (e.isDirectory()) walk(full);
-			else if (e.isFile() && /\.pdf$/i.test(e.name)) out.push(path.relative(root, full).split(path.sep).join("/"));
+			else if (e.isFile() && (/\.pdf$/i.test(e.name) || isOfficeFile(e.name))) out.push(path.relative(root, full).split(path.sep).join("/"));
 		}
 	};
 	walk(root);
@@ -190,8 +198,33 @@ export async function ingestFile(relative: string, deps: IngestDeps = defaultDep
 			return { ...base, sha256: hash, status: "duplicate", doc: same, note: `Same content as ${same}.` };
 		}
 
-		const pages = await deps.convert(data);
-		if (!pages) return { ...base, sha256: hash, note: "The PDF could not be read (broken or password-protected)." };
+		// A password-protected PDF: the inbox sidecar, else one saved earlier for this hash.
+		const sidecar = readSidecar(abs);
+		const password = sidecar?.password ?? pdfPassword(hash);
+		const converted = await deps.convert(data, password);
+		if (converted === "password") {
+			const name = path.basename(abs);
+			return {
+				...base,
+				sha256: hash,
+				note: password
+					? `The password in ${sidecar ? path.basename(sidecar.file) : "the saved passwords"} does not open ${name}.`
+					: `${name} is password-protected. Save the password as the first line of a text file named ${name}.password next to it; it is retried on the next scan.`,
+			};
+		}
+		const pages = converted;
+		if (!pages) return { ...base, sha256: hash, note: "The PDF could not be read (broken, or not a PDF)." };
+		// Opened with a password: keep it for page display, drop the sidecar.
+		if (password) {
+			savePdfPassword(hash, password);
+			if (sidecar) {
+				try {
+					fs.unlinkSync(sidecar.file);
+				} catch {
+					// left behind; harmless
+				}
+			}
+		}
 
 		const weak = pages
 			.filter((p) => p.kind === "image-only" || (p.kind === "text" && needsVision(p.markdown)))
@@ -230,7 +263,7 @@ export async function ingestFile(relative: string, deps: IngestDeps = defaultDep
 		const toOcr = copyOf ? [] : weak.filter((page) => !early.matches.has(page));
 		if (toOcr.length > 0) {
 			fs.mkdirSync(ocrDir, { recursive: true });
-			const rendered = await deps.render(abs, toOcr);
+			const rendered = await deps.render(abs, toOcr, password);
 			await mapLimit(rendered, OCR_CONCURRENCY, async ({ page, png }) => {
 				fs.writeFileSync(path.join(/* turbopackIgnore: true */ ocrDir, `${page}.png`), png);
 				const raw = await deps.ocr(png, `${page}.png`);
@@ -250,9 +283,17 @@ export async function ingestFile(relative: string, deps: IngestDeps = defaultDep
 		const kept = (page: number) => (copyOf ? freshInCopy.has(page) : !skipped.has(page));
 		const leftOut = pages.map((p) => p.number).filter((n) => !kept(n));
 		const doc = `materi-inbox/${relative}`;
-		const chunks: IngestChunk[] = pages
-			.filter((p) => kept(p.number))
-			.flatMap((p) => chunkPage(p.number, text.get(p.number) ?? ""));
+		const keptPages = pages.filter((p) => kept(p.number));
+		// Figure pages (diagrams, charts) carry the document title and section
+		// heading, so a meaning search finds them by topic (core withPageContext).
+		const chunks: IngestChunk[] = withPageContext(
+			keptPages.flatMap((p) => chunkPage(p.number, text.get(p.number) ?? "")),
+			{
+				docTitle: docTitleFromFile(relative),
+				pages: keptPages.map((p) => p.number),
+				figurePages: new Set(keptPages.filter((p) => p.kind === "image-only" || ocrDone.includes(p.number)).map((p) => p.number)),
+			},
+		);
 		if (chunks.length === 0) {
 			const of = mostMatchedDoc(skipped);
 			if (of) return { ...recordCopy(of, `Near copy of ${of}: every page with text is already indexed.`), ocrPages: ocrDone.length };
@@ -304,6 +345,49 @@ export async function ingestFile(relative: string, deps: IngestDeps = defaultDep
 	}
 }
 
+/** A free PDF name next to `abs`: "x.pdf", else "x (pptx).pdf". */
+function pdfNameFor(abs: string): string {
+	const { dir, name, ext } = path.parse(abs);
+	const plain = path.join(/* turbopackIgnore: true */ dir, `${name}.pdf`);
+	return fs.existsSync(plain) ? path.join(/* turbopackIgnore: true */ dir, `${name} (${ext.slice(1).toLowerCase()}).pdf`) : plain;
+}
+
+/**
+ * A Word or PowerPoint file in the inbox: converted to PDF beside it (the
+ * PDF is what search, OCR and page display use), the original moved to
+ * materi-files next to where its PDF will live, then the PDF is ingested
+ * like any other. No converter on this machine = skipped with a note; the
+ * file stays in the inbox.
+ */
+export async function ingestOfficeFile(relative: string, deps: IngestDeps = defaultDeps()): Promise<IngestOutcome> {
+	const at = deps.now().toISOString();
+	const matkul = matkulFromInboxPath(relative);
+	const base: IngestOutcome = { at, file: relative, matkul, status: "failed" };
+	if (!matkul) return { ...base, status: "skipped", note: "Put the file in a course folder: materi-inbox/<matkul>/file.pptx." };
+	const converter = (deps.office ?? officeConverter)();
+	if (!converter) {
+		return { ...base, status: "skipped", note: "Word/PowerPoint files need LibreOffice or Microsoft Office on this computer; save it as PDF instead." };
+	}
+	const root = materiInboxDir();
+	const abs = path.join(/* turbopackIgnore: true */ root, ...relative.split("/"));
+	const pdfAbs = pdfNameFor(abs);
+	try {
+		await converter.convert(abs, pdfAbs);
+	} catch (error) {
+		return { ...base, note: `Conversion with ${converter.name} failed: ${error instanceof Error ? error.message : String(error)}` };
+	}
+	const original = path.basename(abs);
+	try {
+		storeSourcePdf(abs, matkul, relative.split("/").slice(1).join("/"), sha256(new Uint8Array(fs.readFileSync(abs))));
+	} catch {
+		// The original stays in the inbox; it is not converted again this run.
+	}
+	const pdfRel = path.relative(root, pdfAbs).split(path.sep).join("/");
+	const outcome = await ingestFile(pdfRel, deps);
+	const converted = `Converted from ${original} with ${converter.name}.`;
+	return { ...outcome, convertedFrom: original, note: outcome.note ? `${converted} ${outcome.note}` : converted };
+}
+
 /** Files already handled this process (path + size + mtime), so a scan does not re-hash or re-log them. */
 const handled = new Map<string, string>();
 let running: Promise<IngestOutcome[]> | null = null;
@@ -322,9 +406,9 @@ export function scanInbox(deps?: IngestDeps, now: () => number = Date.now): Prom
 				continue;
 			}
 			if (now() - stat.mtimeMs < SETTLE_MS) continue;
-			const key = `${stat.size}:${stat.mtimeMs}`;
+			const key = `${stat.size}:${stat.mtimeMs}:${sidecarStamp(path.join(/* turbopackIgnore: true */ root, ...rel.split("/")))}`;
 			if (handled.get(rel) === key) continue;
-			const outcome = await ingestFile(rel, deps);
+			const outcome = isOfficeFile(rel) ? await ingestOfficeFile(rel, deps) : await ingestFile(rel, deps);
 			handled.set(rel, key);
 			logOutcome(outcome);
 			outcomes.push(outcome);
@@ -392,11 +476,12 @@ export async function deepseekOcr(png: Buffer, name: string): Promise<string> {
 
 export function defaultDeps(): IngestDeps {
 	return {
-		convert: async (data) => {
-			const result = await convertPdf(data, MAX_PAGES);
-			return result.kind === "converted" ? result.pages : null;
+		convert: async (data, password) => {
+			const result = await convertPdf(data, MAX_PAGES, { password });
+			if (result.kind === "converted") return result.pages;
+			return result.kind === "unreadable" && result.passwordProtected ? "password" : null;
 		},
-		render: (pdfPath, pages) => getHeadless().renderPdfPages(pdfPath, pages, { dpi: OCR_DPI }),
+		render: (pdfPath, pages, password) => getHeadless().renderPdfPages(pdfPath, pages, { dpi: OCR_DPI, password }),
 		ocr: deepseekOcr,
 		embed: (texts) => embedDocuments(texts),
 		now: () => new Date(),

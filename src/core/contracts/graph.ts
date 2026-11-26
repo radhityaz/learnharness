@@ -312,6 +312,11 @@ export interface GraphSnapshot {
 	fileSources: Record<string, string>;
 	/** nodeId → chatIds that touched the node (click-through provenance). */
 	nodeSessions: Record<string, string[]>;
+	/** sourceId → course ids (matkul) the source belongs to, read from the
+	 *  chat's materi search results or the notes file's path
+	 *  (core/graph-courses.ts). Sources without evidence are absent. Optional
+	 *  so older snapshots and hand-built fixtures stay valid. */
+	sourceCourses?: Record<string, string[]>;
 	/** Birth-session communities (core/session-clusters.ts: each
 	 * proposition joins the cluster of the session that birthed it —
 	 * session provenance, no Louvain, no embeddings), MIN_CLUSTER_SIZE

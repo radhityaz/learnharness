@@ -15,6 +15,7 @@ import {
 	ocrToText,
 	parseOcrBlocks,
 } from "../src/core/materi-ingest.ts";
+import * as materiIngestCore from "../src/core/materi-ingest.ts";
 import { EMBED_MODEL, pageWords } from "../src/core/pdf-index.ts";
 import type { PdfPage } from "../src/agent/subagents/pdf-markdown.ts";
 import { appendToMateriIndex, buildMateriFts, exactSearchMateri, materiCourses } from "../src/server/materi-index.ts";
@@ -144,11 +145,11 @@ test("ingest: a new PDF is OCR'd on weak pages, embedded, indexed, and registere
 		assert.equal(out.status, "ingested", out.note);
 		assert.deepEqual(calls.render, [[2, 3]], "only weak pages are rendered");
 		assert.equal(out.ocrPages, 2);
-		assert.equal(out.chunks, 2, "page 3 OCR'd to nothing and page 4 is empty");
-		assert.equal(out.embedTokens, 20);
+		assert.equal(out.chunks, 3, "page 3 OCR'd to nothing (a figure page: one placeholder chunk); page 4 is empty");
+		assert.equal(out.embedTokens, 30);
 
 		const courses = materiCourses();
-		assert.deepEqual(courses, [{ matkul: "matkul-mr4062-manajemen-proyek", rows: 3 }]);
+		assert.deepEqual(courses, [{ matkul: "matkul-mr4062-manajemen-proyek", rows: 4 }]);
 		const hit = exactSearchMateri("largest EF");
 		assert.equal(hit.hits[0]?.doc, "materi-inbox/matkul-mr4062-manajemen-proyek/Slide/ch08.pdf");
 		assert.equal(hit.hits[0]?.page, 2);
@@ -343,4 +344,35 @@ test("ingest: a shortened copy with one page of its own is not OCR'd and indexes
 	} finally {
 		env.restore();
 	}
+});
+
+test("docTitleFromFile: upload stamps and separators become a readable title", () => {
+	const { docTitleFromFile } = materiIngestCore;
+	assert.equal(docTitleFromFile("matkul-ti4005/1792038199815_M7-RL-dan-CNN.pdf"), "M7 RL dan CNN");
+	assert.equal(docTitleFromFile("Slide/manajemen proyek-week 1.pdf"), "manajemen proyek week 1");
+});
+
+test("withPageContext: figure pages carry the document title and section; empty figure pages get a placeholder", () => {
+	const { withPageContext } = materiIngestCore;
+	const long = "Forward pass computes ES and EF for every activity in the network. ".repeat(4);
+	const out = withPageContext(
+		[
+			{ page: 1, title: "Scheduling", text: "Scheduling" },
+			{ page: 2, title: "CPM", text: long },
+			{ page: 3, title: "ES=0", text: "ES=0 EF=4" },
+		],
+		{ docTitle: "Chapter 8", pages: [1, 2, 3, 4, 5], figurePages: new Set([3, 4]) },
+	);
+	assert.deepEqual(
+		out.map((c) => [c.page, c.title]),
+		[
+			[1, "Chapter 8 · Scheduling"],
+			[2, "CPM"],
+			[3, "Chapter 8 · CPM · ES=0"],
+			[4, "Chapter 8 · CPM"],
+		],
+	);
+	assert.match(out[3]?.text ?? "", /Figure page .* "CPM"/);
+	// Page 5: no text and no picture: nothing to find, nothing indexed.
+	assert.equal(out.some((c) => c.page === 5), false);
 });

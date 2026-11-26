@@ -769,6 +769,8 @@ export async function handleChatInput(
 							searchAvailable,
 						},
 						...(graphToolsEnabled(effective) ? { graph: { chatStore: stores.chatStore, graphStore: stores.graphStore } } : {}),
+						// Course-material search: no installed index = no materi tools.
+						materi: materiSearchPort,
 					},
 					agentOpts,
 				)
@@ -812,6 +814,8 @@ export async function handleChatInput(
 						// knowledge graph through tools when the gate opens —
 						// graph master switch AND the agent.graphTools toggle.
 						...(graphToolsEnabled(effective) ? { graphStore: stores.graphStore } : {}),
+						// Course-material search: questions grounded in the course's pages.
+						materi: materiSearchPort,
 					},
 					agentOpts,
 				);

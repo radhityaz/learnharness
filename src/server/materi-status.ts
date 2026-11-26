@@ -9,7 +9,8 @@ import path from "node:path";
 
 import type { MateriSourceEntry } from "../core/materi-ingest.ts";
 import { primingEnabled } from "../core/settings-resolution.ts";
-import { materiCourses, materiIndexDir } from "./materi-index.ts";
+import { voyageSpend, type VoyageSpend } from "../core/voyage-cost.ts";
+import { materiCourses, materiIndexDir, readVoyageUsage } from "./materi-index.ts";
 import { effectiveSettings } from "./stores.ts";
 import { materiInboxDir, readSources, type IngestOutcome } from "./materi-ingest.ts";
 
@@ -33,6 +34,8 @@ export interface MateriStatus {
 	priming: boolean;
 	/** Newest first, at most 8. */
 	recent: IngestOutcome[];
+	/** Voyage spend recorded by the ledger (search + ingest). */
+	voyage: VoyageSpend;
 }
 
 const RECENT = 8;
@@ -65,7 +68,7 @@ export function materiStatus(): MateriStatus {
 	} catch {
 		// unreadable settings: report the default
 	}
-	const base = { inbox: materiInboxDir(), priming, recent: recentIngests() };
+	const base = { inbox: materiInboxDir(), priming, recent: recentIngests(), voyage: voyageSpend(readVoyageUsage()) };
 	let courses: { matkul: string; rows: number }[];
 	try {
 		courses = materiCourses();

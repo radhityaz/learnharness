@@ -121,6 +121,55 @@ export function chunkPage(page: number | null, raw: string): IngestChunk[] {
 	return out;
 }
 
+/** Below this many characters a page is mostly picture: its own words do not say what it is about. */
+export const FIGURE_PAGE_CHARS = 200;
+
+/** "1792038199815_M7-RL-dan-CNN.pdf" → "M7 RL dan CNN": the file name as a readable title. */
+export function docTitleFromFile(file: string): string {
+	const base = (file.split(/[\\/]/).pop() ?? file).replace(/\.[a-z0-9]+$/i, "");
+	return base.replace(/^\d{8,}[_-]/, "").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim() || base;
+}
+
+/**
+ * Makes figure pages findable. A page that is mostly a diagram, chart or photo
+ * has few words of its own (or none, when OCR read nothing), so a meaning
+ * search cannot reach it. Such pages get the document title and the nearest
+ * earlier heading in their chunk title, and a page with no text at all gets
+ * one placeholder chunk saying it is a figure page of that section. Search
+ * then finds them by topic and materi_page can show the picture itself.
+ * Pages are processed in order; `figurePages` are the pages that draw images.
+ */
+export function withPageContext(
+	chunks: IngestChunk[],
+	opts: { docTitle: string; pages: number[]; figurePages: ReadonlySet<number> },
+): IngestChunk[] {
+	const byPage = new Map<number, IngestChunk[]>();
+	for (const c of chunks) if (c.page !== null) byPage.set(c.page, [...(byPage.get(c.page) ?? []), c]);
+	const out: IngestChunk[] = [...chunks.filter((c) => c.page === null)];
+	let heading = "";
+	for (const page of [...opts.pages].sort((a, b) => a - b)) {
+		const mine = byPage.get(page) ?? [];
+		const chars = mine.reduce((n, c) => n + c.text.length, 0);
+		const context = [opts.docTitle, heading].filter(Boolean).join(" · ");
+		if (mine.length === 0) {
+			if (opts.figurePages.has(page)) {
+				out.push({ page, title: context, text: `Figure page (diagram, chart or picture) with no readable text${heading ? `, in the section "${heading}"` : ""}.` });
+			}
+			continue;
+		}
+		if (chars < FIGURE_PAGE_CHARS) {
+			out.push(...mine.map((c) => ({ ...c, title: [context, c.title].filter(Boolean).join(" · ") })));
+			// A short text page (a section divider) names the section; a figure's
+			// OCR labels do not.
+			if (!opts.figurePages.has(page) && mine[0]?.title) heading = mine[0].title;
+		} else {
+			out.push(...mine);
+			heading = mine[0]?.title || heading;
+		}
+	}
+	return out;
+}
+
 /** The text sent to the embedder for a chunk (same format as the migrated vectors). */
 export function embedText(chunk: IngestChunk): string {
 	return `${chunk.title}\n${chunk.text}`;

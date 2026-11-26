@@ -23,6 +23,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { PATHS } from "../../config.ts";
 import type { MateriExactResult, MateriHit, MateriQueryOptions, MateriSearchPort } from "../core/materi.ts";
+import type { VoyageUsageLine } from "../core/voyage-cost.ts";
 import {
 	EMBED_MODEL,
 	HIT_TEXT_CAP,
@@ -243,6 +244,45 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 	});
 }
 
+/** The Voyage spend ledger: one JSON line per successful call. */
+export function voyageUsagePath(): string {
+	return path.join(materiIndexDir(), "voyage-usage.jsonl");
+}
+
+/** Append {at, model, tokens} for one billed call. Never throws: a ledger
+ *  that cannot be written must not fail a search or an ingest. */
+function recordVoyageUsage(body: unknown, response: unknown): void {
+	try {
+		const model = (body as { model?: unknown })?.model;
+		const tokens = (response as { usage?: { total_tokens?: unknown } })?.usage?.total_tokens;
+		if (typeof model !== "string" || typeof tokens !== "number") return;
+		fs.mkdirSync(materiIndexDir(), { recursive: true });
+		fs.appendFileSync(voyageUsagePath(), `${JSON.stringify({ at: new Date().toISOString(), model, tokens })}\n`);
+	} catch {
+		// best effort
+	}
+}
+
+/** Every ledger line; torn lines are skipped. */
+export function readVoyageUsage(): VoyageUsageLine[] {
+	let raw: string;
+	try {
+		raw = fs.readFileSync(voyageUsagePath(), "utf8");
+	} catch {
+		return [];
+	}
+	const out: VoyageUsageLine[] = [];
+	for (const line of raw.split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			out.push(JSON.parse(line) as VoyageUsageLine);
+		} catch {
+			// skipped
+		}
+	}
+	return out;
+}
+
 async function voyagePost<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
 	const key = voyageKey();
 	let last = "";
@@ -257,7 +297,11 @@ async function voyagePost<T>(url: string, body: unknown, signal?: AbortSignal): 
 				body: JSON.stringify(body),
 				signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
 			});
-			if (res.ok) return (await res.json()) as T;
+			if (res.ok) {
+				const json = (await res.json()) as T;
+				recordVoyageUsage(body, json);
+				return json;
+			}
 			const detail = (await res.text()).slice(0, 200).replaceAll(key, "***");
 			last = `HTTP ${res.status}: ${detail}`;
 			if (!RETRY_STATUS.has(res.status)) break;
