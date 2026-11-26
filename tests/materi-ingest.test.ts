@@ -20,6 +20,8 @@ import { EMBED_MODEL, pageWords } from "../src/core/pdf-index.ts";
 import type { PdfPage } from "../src/agent/subagents/pdf-markdown.ts";
 import { appendToMateriIndex, buildMateriFts, exactSearchMateri, materiCourses } from "../src/server/materi-index.ts";
 import {
+	backfillDoc,
+	indexedPages,
 	ingestFile,
 	readSources,
 	resetInboxMemory,
@@ -375,4 +377,63 @@ test("withPageContext: figure pages carry the document title and section; empty 
 	assert.match(out[3]?.text ?? "", /Figure page .* "CPM"/);
 	// Page 5: no text and no picture: nothing to find, nothing indexed.
 	assert.equal(out.some((c) => c.page === 5), false);
+});
+
+test("backfill: missing pages of an indexed document are added; twins are left out unpaid and remembered", async () => {
+	const env = tempEnv();
+	try {
+		const matkul = "matkul-ti4021-rekayasa-kognitif";
+		const shared =
+			"# Attention\nSelective attention filters which sensory signals reach working memory, while divided attention splits limited capacity across concurrent tasks such as driving and talking on a phone; performance drops when both demand the same resource.";
+		const own =
+			"# Vigilance\nVigilance decrement means detection of rare critical signals declines over long monitoring periods; operators in radar rooms or quality inspection miss more targets after thirty minutes, especially when events are infrequent.";
+		appendToMateriIndex(matkul, [
+			{ doc: "materi/other.pdf/markdown.md", page: 7, text: shared, vector: Float32Array.from([1, 0]) },
+			{ doc: "materi/deck.pdf/markdown.md", page: 1, text: "# Intro\nalready here", vector: Float32Array.from([0, 1]) },
+		]);
+		const pdfDir = path.join(path.dirname(env.index), "materi-files", matkul);
+		fs.mkdirSync(pdfDir, { recursive: true });
+		fs.writeFileSync(path.join(pdfDir, "deck.pdf"), "deck bytes");
+		const entry = { doc: "materi/deck.pdf/markdown.md", matkul, sha256: "a".repeat(64), pdf: `materi-files/${matkul}/deck.pdf`, origin: "legacy" as const };
+		fs.writeFileSync(path.join(env.index, "sources.json"), JSON.stringify({ version: 1, docs: [entry] }));
+
+		const calls = { render: [] as number[][], ocr: [] as string[], embed: 0 };
+		const deps: IngestDeps = {
+			...fakeDeps(calls),
+			convert: async () => [
+				{ kind: "text", number: 1, markdown: "# Intro\nalready here" },
+				{ kind: "text", number: 2, markdown: shared },
+				{ kind: "text", number: 3, markdown: own },
+				{ kind: "image-only", number: 4 },
+				{ kind: "empty", number: 5 },
+			],
+		};
+		const pagesOf = () => [...(indexedPages(matkul).get(entry.doc) ?? [])].sort((a, b) => a - b);
+
+		const plan = await backfillDoc(entry, new Set(pagesOf()), deps, { dryRun: true });
+		assert.deepEqual(
+			{ missing: plan.missing, twins: plan.twins, textPages: plan.textPages, ocrPages: plan.ocrPages, chunks: plan.chunks },
+			{ missing: 4, twins: 1, textPages: 1, ocrPages: 1, chunks: 0 },
+		);
+		assert.deepEqual(calls, { render: [], ocr: [], embed: 0 }, "a dry run pays for nothing");
+		assert.deepEqual(pagesOf(), [1], "a dry run writes nothing");
+
+		const done = await backfillDoc(entry, new Set(pagesOf()), deps);
+		assert.deepEqual(calls.render, [[4]], "only the figure page is rendered");
+		assert.deepEqual(calls.ocr, ["4.png"]);
+		assert.equal(done.twins, 1);
+		assert.ok(done.chunks >= 2 && done.embedTokens > 0);
+		assert.deepEqual(pagesOf(), [1, 3, 4], "the twin page 2 stays out of the index");
+		const saved = readSources().docs.find((d) => d.doc === entry.doc);
+		assert.deepEqual(saved?.skippedPages, [2, 5], "the twin and the blank page are remembered");
+		assert.deepEqual(saved?.ocrPages, [4]);
+		assert.equal(saved?.pages, 5);
+
+		const again = await backfillDoc(saved ?? entry, new Set(pagesOf()), deps, { dryRun: true });
+		assert.equal(again.missing, 0, "a second run finds nothing left to do");
+		const noPdf = await backfillDoc({ ...entry, pdf: null }, new Set(), deps, { dryRun: true });
+		assert.match(noPdf.note ?? "", /No PDF/);
+	} finally {
+		env.restore();
+	}
 });
